@@ -1,5 +1,3 @@
-import time
-from fastapi import FastAPI
 from redis import Redis
 
 
@@ -8,27 +6,23 @@ class FixedWindowLimiter:
         self.limit = limit
         self.window_size = window_size
         self.redis = Redis(host='localhost', port=6379, decode_responses=True)
-        
 
-    def is_request_allowed (self, user_id:str):
-        try:
-            self.redis = Redis(host='localhost', port=6379, decode_responses=True)
-            self.redis.ping()
-        except Exception as e:
-            print(f"Error connecting to Redis: {e}")
-
-        if not self.redis.exists(user_id):
-            self.redis.set(user_id, 1, ex=self.window_size)
-            return {"status": "Request successful."}
-
-        count = int(self.redis.get(user_id))
-    
+    def check (self, identifier, resource):
+        key = f"{identifier}:{resource}"
+        if not self.redis.exists(key):
+            self.redis.set(key, 1, ex=self.window_size)
+            return {"allowed": "Request allowed."}
+       
+        count = int(self.redis.get(key))
+           
         if(count >= self.limit):
             return {
-                "status": "Rate limit exceeded.",
-                "retry_after": self.redis.ttl(user_id)
+                "allowed": "False",
+                "retry_after": self.redis.ttl(key)
             }
+       
+        self.redis.incr(key)
+       
+        return {"allowed": "Request allowed."}
 
-        self.redis.incr(user_id)
-
-        return {"status": "Request successful."}
+    
