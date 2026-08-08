@@ -6,7 +6,7 @@ class Limiter:
         self.algorithm = algorithm
 
     def check(self, identifier, resource):
-        return self.algorithm.check(
+        return self.algorithm.is_request_allowed(
             identifier,
             resource
         )
