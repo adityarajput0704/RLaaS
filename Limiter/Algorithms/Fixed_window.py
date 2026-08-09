@@ -8,8 +8,8 @@ class FixedWindowLimiter:
         self.window_size = window_size
         self.redis = Redis(host='localhost', port=6379, decode_responses=True)
 
-    def is_request_allowed (self, identifier, resource):
-        key = f"{identifier}:{resource}"
+    def is_request_allowed (self, identifier, method, resource):
+        key = f"{identifier}:{method}:{resource}"
 
         count = self.redis.incr(key)
         if(count == 1):
