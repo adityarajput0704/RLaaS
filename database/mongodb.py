@@ -1,6 +1,9 @@
 from pymongo import MongoClient
+from dotenv import load_dotenv
+import os
 
-client = MongoClient("mongodb://localhost:27017/")
+load_dotenv()  # Load environment variables from .env file
+client = MongoClient(os.getenv("MONGO_URI"))
 
 db = client["rate_limiter"]
 

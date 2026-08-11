@@ -2,13 +2,17 @@ from fastapi import HTTPException
 import time 
 from redis import Redis
 import uuid 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # Load environment variables from .env file
 
 
 class SlidingWindowLimiter:
     def __init__(self, limit:int, window_size:int):
         self.limit = limit
         self.window_size = window_size
-        self.redis = Redis(host='localhost', port=6379, decode_responses=True)
+        self.redis = Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_PORT")), decode_responses=True)
 
     def is_request_allowed(self, identifier, method, resource):
         key = f"{identifier}:{method}:{resource}"
