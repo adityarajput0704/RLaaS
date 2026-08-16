@@ -5,9 +5,13 @@ from database.mongodb import rules
 from config.cache import get_cache, invalidate_cache
 from Limiter.factory import create_limiter
 from Limiter.statistics import Statistics
+from routes.rules import router as rules_router
+
+
+
 app = FastAPI()
 
-
+app.include_router(rules_router)
 
 
 @app.get('/')

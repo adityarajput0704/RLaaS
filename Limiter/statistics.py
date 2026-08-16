@@ -1,12 +1,16 @@
 from redis import Redis
+from dotenv import load_dotenv
+
+load_dotenv()
+import os
 
 
 class Statistics:
 
     def __init__(self):
         self.redis = Redis(
-            host="localhost",
-            port=6379,
+            host=os.getenv("REDIS_HOST"),
+            port=os.getenv("REDIS_PORT"),
             db=0,
             decode_responses=True
         )
