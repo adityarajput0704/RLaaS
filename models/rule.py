@@ -7,8 +7,8 @@ class RuleConfig(BaseModel):
 
 class RuleCreate(BaseModel):
     app_id: str
-    method : str
-    resource: str
+    method: str = Field(min_length=1)
+    resource: str = Field(min_length=1)
     algorithm: str
     config : RuleConfig
 

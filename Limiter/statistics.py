@@ -10,7 +10,7 @@ class Statistics:
     def __init__(self):
         self.redis = Redis(
             host=os.getenv("REDIS_HOST"),
-            port=os.getenv("REDIS_PORT"),
+            port=int(os.getenv("REDIS_PORT")),
             db=0,
             decode_responses=True
         )
