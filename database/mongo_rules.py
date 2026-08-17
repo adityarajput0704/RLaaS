@@ -19,17 +19,17 @@ def get_rules(query = None):
 
     return list(rules.find())
 
-def update_rule(rule_id, update_data):
+def update_one_rule(rule_id, update_data):
     return rules.update_one(
-        {"_id" : rule_id},
+        {"rule_id" : rule_id},
         {"$set": update_data}
     )
 
 def replace_rule(rule_id, rule_data):
     return rules.replace_one(
-        {"_id": rule_id},
+        {"rule_id": rule_id},
         rule_data
     )
 
 def delete_one(rule_id):
-    return rules.delete_one({"_id": rule_id})
+    return rules.delete_one({"rule_id": rule_id})
