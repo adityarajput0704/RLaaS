@@ -6,14 +6,12 @@ class RuleConfig(BaseModel):
     window_size: int | None= None
 
 class RuleCreate(BaseModel):
-    app_id: str
     method: str = Field(min_length=1)
     resource: str = Field(min_length=1)
     algorithm: str
     config : RuleConfig
 
 class RuleUpdate(BaseModel):
-    app_id: str
     method : str
     resource: str
     algorithm: str

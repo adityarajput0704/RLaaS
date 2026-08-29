@@ -1,16 +1,46 @@
-from fastapi import APIRouter, HTTPException
-from database.mongo_rules import create_rule, create_rules, get_rules, get_rule, replace_rule, delete_one, update_one_rule
+from fastapi import APIRouter, HTTPException, Depends
+
+from database.mongo_rules import (
+    create_rule,
+    create_rules,
+    get_rules,
+    get_rule,
+    replace_rule,
+    delete_one,
+    update_one_rule
+)
+
 from database.mongodb import rules
-from models.rule import RuleCreate, RuleUpdate, RulePatch
-from bson import ObjectId
+
+from models.rule import (
+    RuleCreate,
+    RuleUpdate,
+    RulePatch
+)
+
 import uuid
-from config.validation import validate_algorithm, validate_config, validate_method, validate_resource
+
+from config.validation import (
+    validate_algorithm,
+    validate_config,
+    validate_method,
+    validate_resource
+)
+
 from config.cache import invalidate_cache
-router = APIRouter(prefix ="/rules", tags=["Rules"])
+from auth.api_key import get_authenticated_app
+
+
+router = APIRouter(
+    prefix="/rules",
+    tags=["Rules"]
+)
+
 
 def serialize_rules(rule):
-    rule["_id"]= str(rule["_id"])
+    rule["_id"] = str(rule["_id"])
     return rule
+
 
 def find_existing_rule(app_id, method, resource):
     return rules.find_one({
@@ -19,51 +49,80 @@ def find_existing_rule(app_id, method, resource):
         "resource": resource
     })
 
+
+def verify_rule_ownership(rule, app_id):
+
+    if rule["app_id"] != app_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this rule"
+        )
+
+
+# ---------------------------------------------------------
+# CREATE
+# ---------------------------------------------------------
+
 @router.post("/")
-def create(rule: RuleCreate):
+def create(
+    rule: RuleCreate,
+    app_id: str = Depends(get_authenticated_app)
+):
 
     rule_data = rule.model_dump()
-    
+
+    # Always use authenticated application
+    rule_data["app_id"] = app_id
+
     rule_data["method"] = rule_data["method"].upper()
 
     validate_method(rule_data["method"])
     validate_resource(rule_data["resource"])
-
     validate_algorithm(rule_data["algorithm"])
+
     validate_config(
         rule_data["algorithm"],
         rule_data["config"]
     )
 
     existing_rule = find_existing_rule(
-       rule_data["app_id"],
-       rule_data["method"],
-       rule_data["resource"]
+        app_id,
+        rule_data["method"],
+        rule_data["resource"]
     )
 
-    if existing_rule: 
-        return{
-            "message": "Rule already Exists",
-            "rule_id": existing_rule["rule_id"]
-        }
-    
+    if existing_rule:
+        raise HTTPException(
+            status_code=409,
+            detail="Rule already exists"
+        )
+
     rule_data["rule_id"] = f"rule_{uuid.uuid4().hex[:8]}"
-    
+
     rule_id = create_rule(rule_data)
 
     invalidate_cache(
-    rule_data["app_id"],
-    rule_data["method"],
-    rule_data["resource"]
+        app_id,
+        rule_data["method"],
+        rule_data["resource"]
     )
-    return{
-        "message":"Rules created successfully",
+
+    return {
+        "message": "Rules created successfully",
         "rule_id": str(rule_id)
     }
 
+
+# ---------------------------------------------------------
+# BULK CREATE
+# ---------------------------------------------------------
+
 @router.post("/bulk")
-@router.post("/bulk")
-def create_many_rules(rules_data: list[RuleCreate]):
+def create_many_rules(
+    rules_data: list[RuleCreate],
+    app_id: str = Depends(get_authenticated_app)
+):
+
     documents = []
     seen_rules = set()
 
@@ -71,38 +130,39 @@ def create_many_rules(rules_data: list[RuleCreate]):
 
         rule_data = rule.model_dump()
 
+        # Never trust app_id from request
+        rule_data["app_id"] = app_id
+
         rule_data["method"] = rule_data["method"].upper()
 
         validate_method(rule_data["method"])
         validate_resource(rule_data["resource"])
         validate_algorithm(rule_data["algorithm"])
+
         validate_config(
             rule_data["algorithm"],
             rule_data["config"]
         )
 
-        # Identify a rule uniquely
         rule_key = (
-            rule_data["app_id"],
             rule_data["method"],
             rule_data["resource"]
         )
 
-        # Duplicate inside this bulk request
         if rule_key in seen_rules:
             raise HTTPException(
                 status_code=409,
                 detail=(
                     f"Duplicate rule in request: "
-                    f"{rule_data['method']} {rule_data['resource']}"
+                    f"{rule_data['method']} "
+                    f"{rule_data['resource']}"
                 )
             )
 
         seen_rules.add(rule_key)
 
-        # Already exists in MongoDB
         existing_rule = find_existing_rule(
-            rule_data["app_id"],
+            app_id,
             rule_data["method"],
             rule_data["resource"]
         )
@@ -112,7 +172,8 @@ def create_many_rules(rules_data: list[RuleCreate]):
                 status_code=409,
                 detail=(
                     f"Rule already exists: "
-                    f"{rule_data['method']} {rule_data['resource']}"
+                    f"{rule_data['method']} "
+                    f"{rule_data['resource']}"
                 )
             )
 
@@ -124,85 +185,65 @@ def create_many_rules(rules_data: list[RuleCreate]):
 
     return {
         "message": "Rules created successfully",
-        "rule_ids": rule_ids
+        "rule_ids": list(rule_ids)
     }
 
-@router.get("/")
-def get_all_rules():
-    rules = get_rules()
-    return (serialize_rules(rule) for rule in rules) 
 
+# ---------------------------------------------------------
+# GET ALL
+# ---------------------------------------------------------
+
+@router.get("/")
+def get_all_rules(
+    app_id: str = Depends(get_authenticated_app)
+):
+
+    rules_list = get_rules({
+        "app_id": app_id
+    })
+
+    return [
+        serialize_rules(rule)
+        for rule in rules_list
+    ]
+
+
+# ---------------------------------------------------------
+# GET ONE
+# ---------------------------------------------------------
 
 @router.get("/{rule_id}")
-def get_one_rule(rule_id: str):
-    
+def get_one_rule(
+    rule_id: str,
+    app_id: str = Depends(get_authenticated_app)
+):
+
     rule = get_rule(rule_id)
 
-    if not rule: 
-        raise HTTPException(
-            status_code=404,
-            detail= "Rule not found"
-        )
-
-    return serialize_rules(rule)
-
-@router.put("/{rule_id}")
-def replace_rule(rule_id: str, rule:RuleUpdate):
-
-    rule_data = rule.model_dump()
-
-    existing_rule = find_existing_rule(
-           rule_data["app_id"],
-           rule_data["method"],
-           rule_data["resource"]
-        )
-    
-    if not existing_rule: 
-        raise HTTPException(
-            status_code=404,
-            detail="Rule not found. please create one"
-        )
-    
-    rule_data["method"]= rule_data["method"].upper()
-
-    validate_method(rule_data["method"])
-    validate_resource(rule_data["resource"])
-
-    validate_algorithm(rule_data["algorithm"])
-    validate_config(
-        rule_data["algorithm"],
-        rule_data["config"]
-    )
-
-    rule_data["rule_id"]= rule_id
-
-    result = replace_rule(rule_id, rule_data)
-
-    if result.matched_count == 0:
+    if not rule:
         raise HTTPException(
             status_code=404,
             detail="Rule not found"
         )
 
-    invalidate_cache(
-        existing_rule["app_id"],
-        existing_rule["method"],
-        existing_rule["resource"]
+    verify_rule_ownership(
+        rule,
+        app_id
     )
 
-    invalidate_cache(
-        rule_data["app_id"],
-        rule_data["method"],
-        rule_data["resource"]
-        )
+    return serialize_rules(rule)
 
-    return{
-        "message" : "Replaced successfully",
-        "rule_id": rule_id
-    }
 
-@router.patch("/{rule_id}")
-def patch_rule(rule_id:str, rule:RulePatch):
+# ---------------------------------------------------------
+# REPLACE
+# ---------------------------------------------------------
+
+@router.put("/{rule_id}")
+def replace_rule_endpoint(
+    rule_id: str,
+    rule: RuleUpdate,
+    app_id: str = Depends(get_authenticated_app)
+):
 
     existing_rule = get_rule(rule_id)
 
@@ -211,10 +252,104 @@ def patch_rule(rule_id:str, rule:RulePatch):
             status_code=404,
             detail="Rule not found"
         )
-    update_data= rule.model_dump(
-        exclude_unset = True,
-        exclude_none=True
+
+    verify_rule_ownership(
+        existing_rule,
+        app_id
+    )
+
+    rule_data = rule.model_dump()
+
+    # Never trust app_id from request
+    rule_data["app_id"] = app_id
+
+    rule_data["method"] = rule_data["method"].upper()
+
+    validate_method(rule_data["method"])
+    validate_resource(rule_data["resource"])
+    validate_algorithm(rule_data["algorithm"])
+
+    validate_config(
+        rule_data["algorithm"],
+        rule_data["config"]
+    )
+
+    conflicting_rule = find_existing_rule(
+        app_id,
+        rule_data["method"],
+        rule_data["resource"]
+    )
+
+    if (
+        conflicting_rule
+        and conflicting_rule["rule_id"] != rule_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Another rule already exists for this method and resource"
         )
+
+    rule_data["rule_id"] = rule_id
+
+    result = replace_rule(
+        rule_id,
+        rule_data
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Rule not found"
+        )
+
+    # Invalidate old cache
+    invalidate_cache(
+        existing_rule["app_id"],
+        existing_rule["method"],
+        existing_rule["resource"]
+    )
+
+    # Invalidate new cache
+    invalidate_cache(
+        app_id,
+        rule_data["method"],
+        rule_data["resource"]
+    )
+
+    return {
+        "message": "Replaced successfully",
+        "rule_id": rule_id
+    }
+
+
+# ---------------------------------------------------------
+# PATCH
+# ---------------------------------------------------------
+
+@router.patch("/{rule_id}")
+def patch_rule(
+    rule_id: str,
+    rule: RulePatch,
+    app_id: str = Depends(get_authenticated_app)
+):
+
+    existing_rule = get_rule(rule_id)
+
+    if not existing_rule:
+        raise HTTPException(
+            status_code=404,
+            detail="Rule not found"
+        )
+
+    verify_rule_ownership(
+        existing_rule,
+        app_id
+    )
+
+    update_data = rule.model_dump(
+        exclude_unset=True,
+        exclude_none=True
+    )
 
     if not update_data:
         raise HTTPException(
@@ -223,20 +358,30 @@ def patch_rule(rule_id:str, rule:RulePatch):
         )
 
     if "method" in update_data:
+
         update_data["method"] = update_data["method"].upper()
-        validate_method(update_data["method"])
+
+        validate_method(
+            update_data["method"]
+        )
 
     if "resource" in update_data:
-        validate_resource(update_data["resource"])
+
+        validate_resource(
+            update_data["resource"]
+        )
 
     new_algorithm = update_data.get(
-        "algorithm", 
+        "algorithm",
         existing_rule["algorithm"]
     )
 
     validate_algorithm(new_algorithm)
 
-    new_config = existing_rule.get("config", {}).copy()
+    new_config = existing_rule.get(
+        "config",
+        {}
+    ).copy()
 
     patch_config = update_data.get("config")
 
@@ -248,13 +393,45 @@ def patch_rule(rule_id:str, rule:RulePatch):
         new_config
     )
 
-    patch_config = update_data.pop("config", None)
+    patch_config = update_data.pop(
+        "config",
+        None
+    )
 
     if patch_config:
+
         for key, value in patch_config.items():
             update_data[f"config.{key}"] = value
 
-    result = update_one_rule(rule_id, update_data)
+    new_method = update_data.get(
+        "method",
+        existing_rule["method"]
+    )
+
+    new_resource = update_data.get(
+        "resource",
+        existing_rule["resource"]
+    )
+
+    conflicting_rule = find_existing_rule(
+        app_id,
+        new_method,
+        new_resource
+    )
+
+    if (
+        conflicting_rule
+        and conflicting_rule["rule_id"] != rule_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Another rule already exists for this method and resource"
+        )
+
+    result = update_one_rule(
+        rule_id,
+        update_data
+    )
 
     if result.matched_count == 0:
         raise HTTPException(
@@ -268,13 +445,28 @@ def patch_rule(rule_id:str, rule:RulePatch):
         existing_rule["resource"]
     )
 
-    return{
-        "message":"Updated Successfully",
+    invalidate_cache(
+        app_id,
+        new_method,
+        new_resource
+    )
+
+    return {
+        "message": "Updated Successfully",
         "rule_id": rule_id
     }
 
+
+# ---------------------------------------------------------
+# DELETE
+# ---------------------------------------------------------
+
 @router.delete("/{rule_id}")
-def delete_rule(rule_id: str):
+def delete_rule(
+    rule_id: str,
+    app_id: str = Depends(get_authenticated_app)
+):
+
     existing_rule = get_rule(rule_id)
 
     if not existing_rule:
@@ -282,13 +474,26 @@ def delete_rule(rule_id: str):
             status_code=404,
             detail="Rule not found"
         )
+
+    verify_rule_ownership(
+        existing_rule,
+        app_id
+    )
+
     result = delete_one(rule_id)
+
+    if result.deleted_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Rule not found"
+        )
 
     invalidate_cache(
         existing_rule["app_id"],
         existing_rule["method"],
         existing_rule["resource"]
     )
+
     return {
         "message": "Deleted Successfully"
     }

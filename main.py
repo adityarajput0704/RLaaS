@@ -6,12 +6,14 @@ from config.cache import get_cache, invalidate_cache
 from Limiter.factory import create_limiter
 from Limiter.statistics import Statistics
 from routes.rules import router as rules_router
-
-
+from routes.apps import router as apps_router
+from fastapi import Depends
+from auth.api_key import get_authenticated_app
 
 app = FastAPI()
 
 app.include_router(rules_router)
+app.include_router(apps_router)
 
 
 @app.get('/')
@@ -20,7 +22,12 @@ def home():
 
 
 @app.get("/rate-limiter")
-def rate_limiter(app_id: str, user_id: str, method: str, resource: str):
+def rate_limiter(
+    user_id: str,
+    method: str,
+    resource: str,
+    app_id: str = Depends(get_authenticated_app)
+):
     method = method.upper()
     rule = get_cache(
         app_id,
@@ -45,3 +52,13 @@ stats = Statistics()
 def get_stats(user_id: str, method: str, resource: str):
 
     return stats.get_stats(user_id, method, resource)
+
+
+@app.get("/auth-test")
+def auth_test(
+    app_id: str = Depends(get_authenticated_app)
+):
+    return {
+        "authenticated": True,
+        "app_id": app_id
+    }

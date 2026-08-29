@@ -11,6 +11,7 @@ redis_client = Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_POR
 
 cache_TTL = 3600  # Cache time-to-live in seconds (1 hour)
 def get_cache(app_id: str, user_id: str, method: str, resource: str, rules_collection: Collection):
+    method = method.upper()
     cache_key = f"config:{app_id}:{method}:{resource}"
 
     cached = redis_client.get(cache_key)
