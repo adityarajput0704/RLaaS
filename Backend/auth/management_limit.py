@@ -1,7 +1,7 @@
 from fastapi import Header, HTTPException
 from redis import Redis
 from dotenv import load_dotenv
-from auth.api_key import authenticate_api_key, hash_api_key
+from Backend.auth.api_key import authenticate_api_key, hash_api_key
 import os
 
 load_dotenv()

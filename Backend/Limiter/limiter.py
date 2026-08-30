@@ -1,4 +1,4 @@
-from Limiter.statistics import Statistics
+from Backend.Limiter.statistics import Statistics
 from fastapi import HTTPException
 
 

@@ -1,4 +1,4 @@
-from database.mongodb import rules
+from Backend.database.mongodb import rules
 
 # rules.delete_many({})  # Clear existing rules
 

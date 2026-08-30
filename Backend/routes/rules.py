@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 
-from database.mongo_rules import (
+from Backend.database.mongo_rules import (
     create_rule,
     create_rules,
     get_rules,
@@ -10,9 +10,9 @@ from database.mongo_rules import (
     update_one_rule
 )
 
-from database.mongodb import rules
+from Backend.database.mongodb import rules
 
-from models.rule import (
+from Backend.models.rule import (
     RuleCreate,
     RuleUpdate,
     RulePatch
@@ -20,17 +20,17 @@ from models.rule import (
 
 import uuid
 
-from config.validation import (
+from Backend.config.validation import (
     validate_algorithm,
     validate_config,
     validate_method,
     validate_resource
 )
 
-from config.cache import invalidate_cache
-from auth.api_key import get_authenticated_app
-from auth.authorization import verify_app_access
-from auth.management_limit import check_management_limit
+from Backend.config.cache import invalidate_cache
+from Backend.auth.api_key import get_authenticated_app
+from Backend.auth.authorization import verify_app_access
+from Backend.auth.management_limit import check_management_limit
 
 router = APIRouter(
     prefix="/rules",

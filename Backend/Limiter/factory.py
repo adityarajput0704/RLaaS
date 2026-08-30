@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
-from Limiter.Algorithms.Fixed_window import FixedWindowLimiter
-from Limiter.Algorithms.Sliding_window import SlidingWindowLimiter
-from Limiter.Algorithms.Token_bucket import TokenBucketLimiter
+from Backend.Limiter.Algorithms.Fixed_window import FixedWindowLimiter
+from Backend.Limiter.Algorithms.Sliding_window import SlidingWindowLimiter
+from Backend.Limiter.Algorithms.Token_bucket import TokenBucketLimiter
 
 algorithm_map = {
     "fixed_window": FixedWindowLimiter,

@@ -1,16 +1,16 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import time
-from Limiter.limiter import Limiter
-from database.mongodb import rules
-from config.cache import get_cache, invalidate_cache
-from Limiter.factory import create_limiter
-from Limiter.statistics import Statistics
-from routes.rules import router as rules_router
-from routes.apps import router as apps_router
+from Backend.Limiter.limiter import Limiter
+from Backend.database.mongodb import rules
+from Backend.config.cache import get_cache, invalidate_cache
+from Backend.Limiter.factory import create_limiter
+from Backend.Limiter.statistics import Statistics
+from Backend.routes.rules import router as rules_router
+from Backend.routes.apps import router as apps_router
 from fastapi import Depends
-from auth.api_key import get_authenticated_app
-from models.rate_limit import RateLimitRequest
+from Backend.auth.api_key import get_authenticated_app
+from Backend.models.rate_limit import RateLimitRequest
 from fastapi.responses import JSONResponse
 
 app = FastAPI()

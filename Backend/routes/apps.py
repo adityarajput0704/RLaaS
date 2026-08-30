@@ -1,21 +1,21 @@
 from fastapi import APIRouter, HTTPException, Depends
-from models.app import AppCreate
-from database.mongo_apps import create_app, revoke_api_key, rotate_api_key, get_app
-from auth.api_key import (
+from Backend.models.app import AppCreate
+from Backend.database.mongo_apps import create_app, revoke_api_key, rotate_api_key, get_app
+from Backend.auth.api_key import (
     generate_api_key, 
     generate_app_id, 
     hash_api_key,
      get_authenticated_app_for_rotation
     )
 from datetime import datetime, timedelta, timezone
-from auth.api_key import get_authenticated_app
-from auth.management_limit import check_management_limit
+from Backend.auth.api_key import get_authenticated_app
+from Backend.auth.management_limit import check_management_limit
 
 
 
 router = APIRouter(prefix="/apps", tags=["Applications"] )
 
-@router.post("/", dependencies=[Depends(check_management_limit)])
+@router.post("/", )
 def register_app(app: AppCreate):
 
     app_id = generate_app_id()

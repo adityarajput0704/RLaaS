@@ -1,4 +1,4 @@
-from Limiter.Algorithms.Fixed_window import FixedWindowLimiter
+from Backend.Limiter.Algorithms.Fixed_window import FixedWindowLimiter
 
 limiter = FixedWindowLimiter(
     limit=3,

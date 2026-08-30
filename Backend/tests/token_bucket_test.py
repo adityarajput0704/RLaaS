@@ -1,4 +1,4 @@
-from Limiter.Algorithms.Token_bucket import TokenBucketLimiter
+from Backend.Limiter.Algorithms.Token_bucket import TokenBucketLimiter
 from fastapi import HTTPException
 
 limiter = TokenBucketLimiter(
