@@ -12,8 +12,13 @@ class SlidingWindowLimiter:
     def __init__(self, limit:int, window_size:int):
         self.limit = limit
         self.window_size = window_size
-        self.redis = Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_PORT")), decode_responses=True)
-
+        self.redis = Redis(host=os.getenv("REDIS_HOST"),
+                                port=int(os.getenv("REDIS_PORT")),
+                                db=0,
+                                decode_responses=True,
+                                socket_connect_timeout=5,
+                                socket_timeout=5
+                                )
     def is_request_allowed(self, identifier, method, resource):
         key = f"{identifier}:{method}:{resource}"
         request_id = str(uuid.uuid4())

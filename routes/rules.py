@@ -30,11 +30,12 @@ from config.validation import (
 from config.cache import invalidate_cache
 from auth.api_key import get_authenticated_app
 from auth.authorization import verify_app_access
-
+from auth.management_limit import check_management_limit
 
 router = APIRouter(
     prefix="/rules",
-    tags=["Rules"]
+    tags=["Rules"],
+    dependencies=[Depends(check_management_limit)]
 )
 
 
@@ -355,18 +356,30 @@ def patch_rule(
         )
 
     new_algorithm = update_data.get(
-        "algorithm",
-        existing_rule["algorithm"]
+    "algorithm",
+    existing_rule["algorithm"]
     )
 
     validate_algorithm(new_algorithm)
 
-    new_config = existing_rule.get(
-        "config",
-        {}
-    ).copy()
-
     patch_config = update_data.get("config")
+
+    if new_algorithm != existing_rule["algorithm"]:
+
+        if not patch_config:
+            raise HTTPException(
+                status_code=400,
+                detail="Config is required when changing algorithm"
+            )
+
+        new_config = patch_config.copy()
+
+    else:
+
+        new_config = existing_rule.get(
+            "config",
+            {}
+        ).copy()
 
     if patch_config:
         new_config.update(patch_config)
@@ -376,12 +389,13 @@ def patch_rule(
         new_config
     )
 
-    patch_config = update_data.pop(
-        "config",
-        None
-    )
+    update_data.pop("config", None)
 
-    if patch_config:
+    if new_algorithm != existing_rule["algorithm"]:
+
+        update_data["config"] = new_config
+
+    elif patch_config:
 
         for key, value in patch_config.items():
             update_data[f"config.{key}"] = value

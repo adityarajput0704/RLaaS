@@ -7,8 +7,14 @@ import os
 
 load_dotenv()  # Load environment variables from .env file
 
-redis_client = Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_PORT")), db=0)
-
+redis_client = Redis(
+    host=os.getenv("REDIS_HOST"),
+    port=int(os.getenv("REDIS_PORT")),
+    db=0,
+    decode_responses=True,
+    socket_connect_timeout=5,
+    socket_timeout=5
+)
 cache_TTL = 3600  # Cache time-to-live in seconds (1 hour)
 def get_cache(app_id: str, user_id: str, method: str, resource: str, rules_collection: Collection):
     method = method.upper()
@@ -19,7 +25,6 @@ def get_cache(app_id: str, user_id: str, method: str, resource: str, rules_colle
         return json.loads(cached)
 
     rule = rules_collection.find_one({"app_id": app_id, "method": method, "resource": resource})
-    print(f"Fetched rule from MongoDB: {rule}")  # Debugging line
     if not rule:
         raise HTTPException(status_code=404, detail=f"Rate limit rule not found for the specified {resource}.")
 

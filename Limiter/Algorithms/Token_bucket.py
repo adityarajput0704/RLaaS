@@ -11,7 +11,13 @@ class TokenBucketLimiter:
     def __init__(self, capacity: int, refill_rate: float, ):
         self.capacity = capacity
         self.refill_rate = refill_rate
-        self.redis = Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_PORT")), db=0)
+        self.redis = Redis(host=os.getenv("REDIS_HOST"),
+                                port=int(os.getenv("REDIS_PORT")),
+                                db=0,
+                                decode_responses=True,
+                                socket_connect_timeout=5,
+                                socket_timeout=5
+                                )
 
         self.script = self.redis.register_script("""
             local tokens = tonumber(

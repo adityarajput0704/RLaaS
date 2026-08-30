@@ -3,7 +3,12 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()  # Load environment variables from .env file
-client = MongoClient(os.getenv("MONGO_URI"))
+client = MongoClient(
+    os.getenv("MONGO_URI"),
+    serverSelectionTimeoutMS=5000,
+    connectTimeoutMS=5000,
+    socketTimeoutMS=5000
+)
 
 db = client["rate_limiter"]
 
@@ -21,5 +26,10 @@ rules.create_index(
 
 apps.create_index(
     "app_id",
+    unique=True
+)
+
+apps.create_index(
+    "api_key_hash",
     unique=True
 )

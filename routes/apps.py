@@ -9,12 +9,13 @@ from auth.api_key import (
     )
 from datetime import datetime, timedelta, timezone
 from auth.api_key import get_authenticated_app
+from auth.management_limit import check_management_limit
 
 
 
 router = APIRouter(prefix="/apps", tags=["Applications"] )
 
-@router.post("/")
+@router.post("/", dependencies=[Depends(check_management_limit)])
 def register_app(app: AppCreate):
 
     app_id = generate_app_id()
@@ -39,7 +40,7 @@ def register_app(app: AppCreate):
         "expires_at": expires_at
     }
 
-@router.post("/revoke-key")
+@router.post("/revoke-key", dependencies=[Depends(check_management_limit)])
 def revoke_key(app_id: str = Depends(get_authenticated_app)):
 
     result = revoke_api_key(app_id)

@@ -8,12 +8,13 @@ load_dotenv()
 class Statistics:
 
     def __init__(self):
-        self.redis = Redis(
-            host=os.getenv("REDIS_HOST"),
-            port=int(os.getenv("REDIS_PORT")),
-            db=0,
-            decode_responses=True
-        )
+        self.redis = Redis(host=os.getenv("REDIS_HOST"),
+                                port=int(os.getenv("REDIS_PORT")),
+                                db=0,
+                                decode_responses=True,
+                                socket_connect_timeout=5,
+                                socket_timeout=5
+                                )
 
     def record_allowed(self, app_id, user_id, method, resource):
         method = method.upper()
