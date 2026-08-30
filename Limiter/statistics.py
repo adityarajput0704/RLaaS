@@ -1,8 +1,8 @@
 from redis import Redis
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
-import os
 
 
 class Statistics:
@@ -15,23 +15,23 @@ class Statistics:
             decode_responses=True
         )
 
-    def record_allowed(self, user_id, method, resource):
+    def record_allowed(self, app_id, user_id, method, resource):
         method = method.upper()
-        app_id = "xyz"
+
         key = f"stats:{app_id}:{user_id}:{method}:{resource}:allowed"
 
         self.redis.incr(key)
 
-    def record_blocked(self, user_id, method, resource):
+    def record_blocked(self, app_id, user_id, method, resource):
         method = method.upper()
-        app_id = "xyz"
+
         key = f"stats:{app_id}:{user_id}:{method}:{resource}:blocked"
 
         self.redis.incr(key)
 
-    def get_stats(self, user_id, method, resource):
+    def get_stats(self, app_id, user_id, method, resource):
         method = method.upper()
-        app_id ="xyz"
+
         allowed_key = (
             f"stats:{app_id}:{user_id}:{method}:{resource}:allowed"
         )
@@ -44,6 +44,7 @@ class Statistics:
         blocked = self.redis.get(blocked_key)
 
         return {
+            "app_id": app_id,
             "user_id": user_id,
             "method": method,
             "resource": resource,

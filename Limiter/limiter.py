@@ -1,13 +1,16 @@
-# limiter.py
 from Limiter.statistics import Statistics
 from fastapi import HTTPException
+
+
 class Limiter:
 
     def __init__(self, algorithm):
         self.algorithm = algorithm
         self.stats = Statistics()
 
-    def check(self, identifier, method, resource):
+    def check(self, app_id, user_id, method, resource):
+
+        identifier = f"{app_id}:{user_id}"
 
         try:
             result = self.algorithm.is_request_allowed(
@@ -15,17 +18,20 @@ class Limiter:
                 method,
                 resource
             )
+
             self.stats.record_allowed(
-                identifier, 
-                method, 
+                app_id,
+                user_id,
+                method,
                 resource
             )
 
             return result
-        
+
         except HTTPException:
             self.stats.record_blocked(
-                identifier,
+                app_id,
+                user_id,
                 method,
                 resource
             )

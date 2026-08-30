@@ -29,6 +29,7 @@ from config.validation import (
 
 from config.cache import invalidate_cache
 from auth.api_key import get_authenticated_app
+from auth.authorization import verify_app_access
 
 
 router = APIRouter(
@@ -50,15 +51,6 @@ def find_existing_rule(app_id, method, resource):
     })
 
 
-def verify_rule_ownership(rule, app_id):
-
-    if rule["app_id"] != app_id:
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have access to this rule"
-        )
-
-
 # ---------------------------------------------------------
 # CREATE
 # ---------------------------------------------------------
@@ -69,7 +61,7 @@ def create(
     app_id: str = Depends(get_authenticated_app)
 ):
 
-    rule_data = rule.model_dump()
+    rule_data = rule.model_dump(exclude_none=True)
 
     # Always use authenticated application
     rule_data["app_id"] = app_id
@@ -128,7 +120,7 @@ def create_many_rules(
 
     for rule in rules_data:
 
-        rule_data = rule.model_dump()
+        rule_data = rule.model_dump(exclude_none=True)
 
         # Never trust app_id from request
         rule_data["app_id"] = app_id
@@ -226,10 +218,7 @@ def get_one_rule(
             detail="Rule not found"
         )
 
-    verify_rule_ownership(
-        rule,
-        app_id
-    )
+    verify_app_access(rule, app_id)
 
     return serialize_rules(rule)
 
@@ -253,12 +242,9 @@ def replace_rule_endpoint(
             detail="Rule not found"
         )
 
-    verify_rule_ownership(
-        existing_rule,
-        app_id
-    )
+    verify_app_access(existing_rule, app_id)
 
-    rule_data = rule.model_dump()
+    rule_data = rule.model_dump(exclude_none=True)
 
     # Never trust app_id from request
     rule_data["app_id"] = app_id
@@ -341,10 +327,7 @@ def patch_rule(
             detail="Rule not found"
         )
 
-    verify_rule_ownership(
-        existing_rule,
-        app_id
-    )
+    verify_app_access(existing_rule, app_id)
 
     update_data = rule.model_dump(
         exclude_unset=True,
@@ -475,10 +458,7 @@ def delete_rule(
             detail="Rule not found"
         )
 
-    verify_rule_ownership(
-        existing_rule,
-        app_id
-    )
+    verify_app_access(existing_rule, app_id)
 
     result = delete_one(rule_id)
 
