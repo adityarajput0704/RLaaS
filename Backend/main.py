@@ -12,6 +12,8 @@ from fastapi import Depends
 from auth.api_key import get_authenticated_app
 from models.rate_limit import RateLimitRequest
 from fastapi.responses import JSONResponse
+from database.mongo_apps import get_app
+
 
 app = FastAPI()
 
@@ -108,12 +110,20 @@ def get_stats(
 
     return stats.get_stats(app_id, user_id, method, resource)
 
+@app.get("/stats")
+def get_app_stats(
+    app_id: str = Depends(get_authenticated_app)
+):
+    return stats.get_app_stats(app_id)
 
 @app.get("/auth-test")
 def auth_test(
     app_id: str = Depends(get_authenticated_app)
 ):
+    app = get_app(app_id)
+
     return {
         "authenticated": True,
-        "app_id": app_id
+        "app_id": app_id,
+        "application_name": app["name"] if app else None
     }

@@ -1,0 +1,3372 @@
+===== PACKAGE =====
+{
+  "name": "rlaas-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "lucide-react": "^1.37.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "oxlint": "^1.79.0",
+    "vite": "^8.2.2"
+  }
+}
+
+===== SOURCE FILES =====
+src/App.css
+src/App.jsx
+src/api/applications.js
+src/api/client.js
+src/api/errors.js
+src/api/rateLimiter.js
+src/api/rules.js
+src/api/statistics.js
+src/api/system.js
+src/auth/AuthContext.jsx
+src/auth/session.js
+src/components/layout/Header.jsx
+src/components/layout/Sidebar.jsx
+src/components/ui/ConfirmDialog.jsx
+src/components/ui/MetricCard.jsx
+src/components/ui/Modal.jsx
+src/components/ui/Notice.jsx
+src/components/ui/PageHeader.jsx
+src/components/ui/SimpleChart.jsx
+src/components/ui/StatusBadge.jsx
+src/index.css
+src/main.jsx
+src/pages/ApplicationsPage.jsx
+src/pages/LoginPage.jsx
+src/pages/OverviewPage.jsx
+src/pages/RequestTesterPage.jsx
+src/pages/RulesPage.jsx
+src/pages/SettingsPage.jsx
+src/pages/StatisticsPage.jsx
+src/pages/UsersPage.jsx
+src/utils/format.js
+
+===== ALL SOURCE CODE =====
+
+========== src/auth/AuthContext.jsx ==========
+import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { configureApiClient } from '../api/client';
+import { authenticateWithKey, registerApplication, revokeApiKey, rotateApiKey } from '../api/applications';
+import { ApiError } from '../api/errors';
+import { clearSession, loadSession, saveSession } from './session';
+
+const AuthContext = createContext(null);
+
+export function AuthProvider({ children }) {
+  const initial = loadSession();
+  const [apiKey, setApiKey] = useState(initial?.apiKey || null);
+  const [appId, setAppId] = useState(initial?.appId || null);
+  const [applicationName, setApplicationName] = useState(initial?.applicationName || null);
+  const [expiresAt, setExpiresAt] = useState(initial?.expiresAt || null);
+  const [authError, setAuthError] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(Boolean(initial?.apiKey && initial?.appId));
+
+  const apiKeyRef = useRef(apiKey);
+  apiKeyRef.current = apiKey;
+
+  const logout = useCallback((message = null) => {
+    apiKeyRef.current = null;
+    setApiKey(null);
+    setAppId(null);
+    setApplicationName(null);
+    setExpiresAt(null);
+    setIsAuthenticated(false);
+    clearSession();
+    if (message) {
+      setAuthError(message);
+    }
+  }, []);
+
+  const applySession = useCallback((session) => {
+    apiKeyRef.current = session.apiKey;
+    setApiKey(session.apiKey);
+    setAppId(session.appId);
+    setApplicationName(session.applicationName || null);
+    setExpiresAt(session.expiresAt || null);
+    setIsAuthenticated(true);
+    setAuthError(null);
+    saveSession(session);
+  }, []);
+
+  configureApiClient({
+    getApiKey: () => apiKeyRef.current,
+    onUnauthorized: () => {
+      logout('Your API key is invalid, expired, or revoked.');
+    },
+  });
+
+  const login = useCallback(
+    async (rawKey) => {
+      const key = rawKey.trim();
+      if (!key) {
+        throw new ApiError('Your API key is invalid, expired, or revoked.', { status: 401 });
+      }
+      const result = await authenticateWithKey(key);
+      applySession({
+        apiKey: key,
+        appId: result.data.app_id,
+        applicationName: null,
+        expiresAt: null,
+      });
+      return result.data;
+    },
+    [applySession]
+  );
+
+  const register = useCallback(async (name) => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new ApiError('Please check the submitted values.', { status: 400 });
+    }
+    return registerApplication(trimmed);
+  }, []);
+
+  const completeRegistration = useCallback(
+    (payload, name) => {
+      applySession({
+        apiKey: payload.api_key,
+        appId: payload.app_id,
+        applicationName: name || null,
+        expiresAt: payload.expires_at || null,
+      });
+    },
+    [applySession]
+  );
+
+  const rotateCurrentKey = useCallback(async () => {
+    const currentKey = apiKeyRef.current;
+    try {
+      const result = await rotateApiKey(currentKey);
+      applySession({
+        apiKey: result.data.api_key,
+        appId: result.data.app_id,
+        applicationName,
+        expiresAt: result.data.expires_at || null,
+      });
+      return result.data;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        logout('Your API key is invalid, expired, or revoked.');
+      }
+      throw error;
+    }
+  }, [applySession, applicationName, logout]);
+
+  const rotateExpiredKey = useCallback(async (rawKey) => {
+    const key = rawKey.trim();
+    const result = await rotateApiKey(key);
+    return result.data;
+  }, []);
+
+  const revokeCurrentKey = useCallback(async () => {
+    await revokeApiKey();
+    logout('Your API key is invalid, expired, or revoked.');
+  }, [logout]);
+
+  const value = useMemo(
+    () => ({
+      apiKey,
+      appId,
+      applicationName,
+      expiresAt,
+      isAuthenticated,
+      authError,
+      clearAuthError: () => setAuthError(null),
+      login,
+      logout,
+      register,
+      completeRegistration,
+      rotateCurrentKey,
+      rotateExpiredKey,
+      revokeCurrentKey,
+    }),
+    [
+      apiKey,
+      appId,
+      applicationName,
+      expiresAt,
+      isAuthenticated,
+      authError,
+      login,
+      logout,
+      register,
+      completeRegistration,
+      rotateCurrentKey,
+      rotateExpiredKey,
+      revokeCurrentKey,
+    ]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return ctx;
+}
+
+========== src/auth/session.js ==========
+const SESSION_KEY = 'rlaas_dashboard_session';
+
+function readSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.apiKey || !parsed?.appId) return null;
+    return {
+      apiKey: parsed.apiKey,
+      appId: parsed.appId,
+      applicationName: parsed.applicationName || null,
+      expiresAt: parsed.expiresAt || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function loadSession() {
+  return readSession();
+}
+
+export function saveSession(session) {
+  sessionStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({
+      apiKey: session.apiKey,
+      appId: session.appId,
+      applicationName: session.applicationName || null,
+      expiresAt: session.expiresAt || null,
+    })
+  );
+}
+
+export function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
+========== src/App.css ==========
+.counter {
+  font-size: 16px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 2px solid transparent;
+  transition: border-color 0.3s;
+  margin-bottom: 24px;
+
+  &:hover {
+    border-color: var(--accent-border);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+.hero {
+  position: relative;
+
+  .base,
+  .framework,
+  .vite {
+    inset-inline: 0;
+    margin: 0 auto;
+  }
+
+  .base {
+    width: 170px;
+    position: relative;
+    z-index: 0;
+  }
+
+  .framework,
+  .vite {
+    position: absolute;
+  }
+
+  .framework {
+    z-index: 1;
+    top: 34px;
+    height: 28px;
+    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
+      scale(1.4);
+  }
+
+  .vite {
+    z-index: 0;
+    top: 107px;
+    height: 26px;
+    width: auto;
+    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
+      scale(0.8);
+  }
+}
+
+#center {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+  place-content: center;
+  place-items: center;
+  flex-grow: 1;
+
+  @media (max-width: 1024px) {
+    padding: 32px 20px 24px;
+    gap: 18px;
+  }
+}
+
+#next-steps {
+  display: flex;
+  border-top: 1px solid var(--border);
+  text-align: left;
+
+  & > div {
+    flex: 1 1 0;
+    padding: 32px;
+    @media (max-width: 1024px) {
+      padding: 24px 20px;
+    }
+  }
+
+  .icon {
+    margin-bottom: 16px;
+    width: 22px;
+    height: 22px;
+  }
+
+  @media (max-width: 1024px) {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+#docs {
+  border-right: 1px solid var(--border);
+
+  @media (max-width: 1024px) {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+#next-steps ul {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  margin: 32px 0 0;
+
+  .logo {
+    height: 18px;
+  }
+
+  a {
+    color: var(--text-h);
+    font-size: 16px;
+    border-radius: 6px;
+    background: var(--social-bg);
+    display: flex;
+    padding: 6px 12px;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    transition: box-shadow 0.3s;
+
+    &:hover {
+      box-shadow: var(--shadow);
+    }
+    .button-icon {
+      height: 18px;
+      width: 18px;
+    }
+  }
+
+  @media (max-width: 1024px) {
+    margin-top: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+
+    li {
+      flex: 1 1 calc(50% - 8px);
+    }
+
+    a {
+      width: 100%;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+  }
+}
+
+#spacer {
+  height: 88px;
+  border-top: 1px solid var(--border);
+  @media (max-width: 1024px) {
+    height: 48px;
+  }
+}
+
+.ticks {
+  position: relative;
+  width: 100%;
+
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    top: -4.5px;
+    border: 5px solid transparent;
+  }
+
+  &::before {
+    left: 0;
+    border-left-color: var(--border);
+  }
+  &::after {
+    right: 0;
+    border-right-color: var(--border);
+  }
+}
+
+========== src/utils/format.js ==========
+export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+export const ALGORITHMS = [
+  { id: 'fixed_window', label: 'Fixed Window' },
+  { id: 'sliding_window', label: 'Sliding Window' },
+  { id: 'token_bucket', label: 'Token Bucket' },
+];
+
+export function algorithmLabel(id) {
+  return ALGORITHMS.find((item) => item.id === id)?.label || id || 'N/A';
+}
+
+export function maskApiKey(key) {
+  if (!key) return 'N/A';
+  const prefix = key.startsWith('rlaas_') ? 'rlaas_' : key.slice(0, Math.min(6, key.length));
+  return `${prefix}${'•'.repeat(16)}`;
+}
+
+export function buildRuleConfig(algorithm, fields) {
+  if (algorithm === 'token_bucket') {
+    return {
+      capacity: Number(fields.capacity),
+      refill_rate: Number(fields.refill_rate),
+    };
+  }
+  return {
+    limit: Number(fields.limit),
+    window_size: Number(fields.window_size),
+  };
+}
+
+export function formatExpiresAt(value) {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  return date.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+}
+
+export function blockRate({ allowed, blocked }) {
+  const total = Number(allowed || 0) + Number(blocked || 0);
+  if (!total) return '0.0%';
+  return `${((Number(blocked || 0) / total) * 100).toFixed(1)}%`;
+}
+
+========== src/index.css ==========
+@import "tailwindcss";
+
+@theme {
+  --color-brand-light: #8EB2EB;
+  --color-brand-primary: #78A1E2;
+  --color-brand-dark: #5C8BD6;
+  --color-zinc-950: #09090b;
+  --color-zinc-900: #121215;
+  --color-zinc-850: #18181b;
+  --color-zinc-800: #27272a;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-zinc-800);
+  }
+  
+  html, body, #root {
+    background-color: #000000;
+    color: #f4f4f5;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+}
+
+/* Custom scrollbars for compact technical tables */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #000000;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+========== src/components/ui/MetricCard.jsx ==========
+import React from 'react';
+
+export const MetricCard = ({ title, value, subtext, icon: Icon, badgeText, badgeVariant }) => {
+  return (
+    <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 flex flex-col justify-between">
+      <div className="flex items-center justify-between text-zinc-400 mb-2">
+        <span className="text-xs uppercase tracking-wider font-mono text-zinc-400">{title}</span>
+        {Icon && <Icon className="w-4 h-4 text-zinc-500" />}
+      </div>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-2xl font-semibold tracking-tight text-zinc-100 font-mono">{value}</span>
+        {badgeText && (
+          <span
+            className={`text-xs font-mono px-1.5 py-0.5 rounded ${
+              badgeVariant === 'danger'
+                ? 'bg-red-950/60 text-red-400 border border-red-900/50'
+                : badgeVariant === 'success'
+                ? 'bg-blue-950/60 text-[#8EB2EB] border border-blue-900/50'
+                : 'bg-zinc-900 text-zinc-400 border border-zinc-800'
+            }`}
+          >
+            {badgeText}
+          </span>
+        )}
+      </div>
+      {subtext && <p className="text-xs text-zinc-500 mt-2 font-mono">{subtext}</p>}
+    </div>
+  );
+};
+
+========== src/components/ui/SimpleChart.jsx ==========
+import React, { useState } from 'react';
+
+export const SimpleChart = ({ data = [], height = 180 }) => {
+  const [hoveredIdx, setHoveredIdx] = useState(null);
+
+  if (!data || data.length === 0) return null;
+
+  const maxVal = Math.max(...data.map((d) => (d.allowed || 0) + (d.blocked || 0)), 100);
+  const chartWidth = 600;
+  const chartHeight = height;
+  const paddingLeft = 40;
+  const paddingBottom = 25;
+  const paddingTop = 15;
+  const paddingRight = 15;
+
+  const innerW = chartWidth - paddingLeft - paddingRight;
+  const innerH = chartHeight - paddingTop - paddingBottom;
+
+  const getX = (idx) => paddingLeft + (idx / (data.length - 1)) * innerW;
+  const getY = (val) => paddingTop + innerH - (val / maxVal) * innerH;
+
+  const allowedPoints = data
+    .map((d, i) => `${getX(i)},${getY(d.allowed || 0)}`)
+    .join(' ');
+
+  const blockedPoints = data
+    .map((d, i) => `${getX(i)},${getY(d.blocked || 0)}`)
+    .join(' ');
+
+  return (
+    <div className="w-full bg-zinc-950 border border-zinc-800 rounded-md p-4 flex flex-col gap-2">
+      <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
+        <span className="text-zinc-300 font-medium">Request Rate (24h Activity)</span>
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-0.5 bg-[#78A1E2]" /> Allowed
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2.5 h-0.5 bg-red-500" /> Blocked
+          </span>
+        </div>
+      </div>
+
+      <div className="relative w-full overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+          className="w-full h-auto text-xs font-mono select-none"
+        >
+          {/* Subtle horizontal grid lines */}
+          {[0, 0.33, 0.66, 1].map((pct, i) => {
+            const y = paddingTop + innerH * (1 - pct);
+            const val = Math.round(maxVal * pct);
+            return (
+              <g key={i}>
+                <line
+                  x1={paddingLeft}
+                  y1={y}
+                  x2={chartWidth - paddingRight}
+                  y2={y}
+                  stroke="#27272a"
+                  strokeWidth="1"
+                  strokeDasharray="2 2"
+                />
+                <text
+                  x={paddingLeft - 6}
+                  y={y + 3}
+                  textAnchor="end"
+                  fill="#71717a"
+                  fontSize="9"
+                >
+                  {val > 1000 ? `${(val / 1000).toFixed(0)}k` : val}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Lines */}
+          <polyline
+            fill="none"
+            stroke="#78A1E2"
+            strokeWidth="2"
+            points={allowedPoints}
+          />
+
+          <polyline
+            fill="none"
+            stroke="#ef4444"
+            strokeWidth="1.5"
+            points={blockedPoints}
+          />
+
+          {/* Interactive dots & X-Axis labels */}
+          {data.map((d, i) => {
+            const x = getX(i);
+            const yAllowed = getY(d.allowed || 0);
+            const isHovered = hoveredIdx === i;
+
+            return (
+              <g key={i} onMouseEnter={() => setHoveredIdx(i)} onMouseLeave={() => setHoveredIdx(null)}>
+                {/* X Axis Label */}
+                {i % 2 === 0 && (
+                  <text
+                    x={x}
+                    y={chartHeight - 6}
+                    textAnchor="middle"
+                    fill="#71717a"
+                    fontSize="9"
+                  >
+                    {d.time}
+                  </text>
+                )}
+
+                {/* Hover line */}
+                {isHovered && (
+                  <line
+                    x1={x}
+                    y1={paddingTop}
+                    x2={x}
+                    y2={chartHeight - paddingBottom}
+                    stroke="#52525b"
+                    strokeWidth="1"
+                  />
+                )}
+
+                {/* Point dot */}
+                <circle
+                  cx={x}
+                  cy={yAllowed}
+                  r={isHovered ? 4 : 2.5}
+                  fill="#78A1E2"
+                  stroke="#000000"
+                  strokeWidth="1"
+                  className="cursor-pointer transition-all"
+                />
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Hover Tooltip Overlay */}
+        {hoveredIdx !== null && data[hoveredIdx] && (
+          <div className="absolute top-2 right-4 bg-zinc-900 border border-zinc-700 text-xs font-mono p-2 rounded shadow-lg text-zinc-200 pointer-events-none">
+            <div className="text-zinc-400 font-semibold mb-1">{data[hoveredIdx].time}</div>
+            <div className="text-[#8EB2EB]">Allowed: {(data[hoveredIdx].allowed || 0).toLocaleString()}</div>
+            <div className="text-red-400">Blocked: {(data[hoveredIdx].blocked || 0).toLocaleString()}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+========== src/components/ui/StatusBadge.jsx ==========
+import React from 'react';
+
+export const StatusBadge = ({ status, variant, label }) => {
+  const text = label || status;
+  const s = (status || '').toLowerCase();
+
+  // Allowed / Active -> subtle blue accent (#8EB2EB / #5C8BD6)
+  if (s === 'allowed' || s === '200' || variant === 'allowed') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-xs font-medium bg-blue-950/60 text-[#8EB2EB] border border-[#5C8BD6]/40">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#78A1E2]" />
+        {text}
+      </span>
+    );
+  }
+
+  // Blocked -> subtle red
+  if (s === 'blocked' || s === '429' || variant === 'blocked') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-xs font-medium bg-red-950/40 text-red-400 border border-red-900/40">
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+        {text}
+      </span>
+    );
+  }
+
+  // Active state
+  if (s === 'active' || variant === 'active') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-xs font-medium bg-zinc-900 text-zinc-300 border border-zinc-700">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#78A1E2]" />
+        {text}
+      </span>
+    );
+  }
+
+  // Expiring / Warning state
+  if (s === 'expiring' || variant === 'warning') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-xs font-medium bg-amber-950/40 text-amber-300 border border-amber-800/40">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+        {text}
+      </span>
+    );
+  }
+
+  // Disabled / Inactive / Default
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-xs font-medium bg-zinc-900 text-zinc-400 border border-zinc-800">
+      <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
+      {text}
+    </span>
+  );
+};
+
+========== src/components/ui/Notice.jsx ==========
+import React from 'react';
+import { Info } from 'lucide-react';
+
+export const Notice = ({ children, title = 'Technical Note', icon: Icon = Info }) => {
+  return (
+    <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 text-xs text-zinc-300 flex items-start gap-3 my-4">
+      <Icon className="w-4 h-4 text-[#78A1E2] shrink-0 mt-0.5" />
+      <div>
+        {title && <span className="font-semibold text-zinc-200 block mb-0.5 font-mono">{title}</span>}
+        <div className="text-zinc-400 leading-relaxed font-sans">{children}</div>
+      </div>
+    </div>
+  );
+};
+
+========== src/components/ui/Modal.jsx ==========
+import React, { useEffect } from 'react';
+import { X } from 'lucide-react';
+
+export const Modal = ({ isOpen, onClose, title, children, maxWidth = 'max-w-md' }) => {
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Dark backdrop without gradients or glass blur */}
+      <div
+        className="fixed inset-0 bg-black/80 transition-opacity"
+        onClick={onClose}
+      />
+      <div
+        className={`relative bg-zinc-950 border border-zinc-800 rounded-md w-full ${maxWidth} p-6 shadow-2xl z-10`}
+      >
+        <div className="flex items-center justify-between pb-4 mb-4 border-b border-zinc-800">
+          <h3 className="text-base font-semibold text-zinc-100 font-mono">{title}</h3>
+          <button
+            onClick={onClose}
+            className="text-zinc-500 hover:text-zinc-300 p-1 rounded-sm transition-colors"
+            aria-label="Close modal"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div>{children}</div>
+      </div>
+    </div>
+  );
+};
+
+========== src/components/ui/ConfirmDialog.jsx ==========
+import React from 'react';
+import { Modal } from './Modal';
+import { AlertTriangle } from 'lucide-react';
+
+export const ConfirmDialog = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message,
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
+  isDanger = false,
+}) => {
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={title}>
+      <div className="flex flex-col gap-4">
+        <div className="flex items-start gap-3">
+          {isDanger && <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />}
+          <p className="text-xs text-zinc-300 leading-relaxed font-sans">{message}</p>
+        </div>
+        <div className="flex items-center justify-end gap-2 pt-4 border-t border-zinc-800">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs font-mono rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 transition-colors"
+          >
+            {cancelText}
+          </button>
+          <button
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }}
+            className={`px-3 py-1.5 text-xs font-mono rounded transition-colors ${
+              isDanger
+                ? 'bg-red-950/80 border border-red-800 text-red-300 hover:bg-red-900'
+                : 'bg-zinc-800 border border-zinc-700 text-zinc-100 hover:bg-zinc-700'
+            }`}
+          >
+            {confirmText}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+========== src/components/ui/PageHeader.jsx ==========
+import React from 'react';
+
+export const PageHeader = ({ title, description, actions, badge }) => {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-zinc-800 mb-6">
+      <div>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-tight text-zinc-100 font-mono">{title}</h1>
+          {badge && (
+            <span className="text-xs px-2 py-0.5 rounded-sm bg-zinc-900 border border-zinc-800 text-zinc-400 font-mono">
+              {badge}
+            </span>
+          )}
+        </div>
+        {description && <p className="text-xs text-zinc-400 mt-1 max-w-2xl">{description}</p>}
+      </div>
+      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+    </div>
+  );
+};
+
+========== src/components/layout/Header.jsx ==========
+import React, { useState } from 'react';
+import { Menu, Terminal } from 'lucide-react';
+import { useAuth } from '../../auth/AuthContext';
+import { maskApiKey } from '../../utils/format';
+
+export const Header = ({ onOpenSidebar, activeTab, onOpenTester }) => {
+  const { appId, apiKey, logout } = useAuth();
+  const [showKey, setShowKey] = useState(false);
+
+  const tabTitles = {
+    overview: 'Overview',
+    applications: 'Application',
+    rules: 'Rate Limiting Rules',
+    users: 'User Inspector',
+    tester: 'Request Tester',
+    statistics: 'Statistics',
+    settings: 'Settings',
+  };
+
+  return (
+    <header className="h-14 bg-zinc-950 border-b border-zinc-800 px-4 flex items-center justify-between sticky top-0 z-30">
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          onClick={onOpenSidebar}
+          className="lg:hidden text-zinc-400 hover:text-zinc-200 p-1.5 rounded-sm bg-zinc-900 border border-zinc-800"
+          aria-label="Open navigation menu"
+        >
+          <Menu className="w-4 h-4" />
+        </button>
+
+        <div className="flex items-center gap-2 text-xs font-mono min-w-0">
+          <span className="text-zinc-500">RLaaS</span>
+          <span className="text-zinc-700">/</span>
+          <span className="text-zinc-200 font-semibold truncate">{tabTitles[activeTab] || 'Console'}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onOpenTester}
+          className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-850 hover:text-zinc-100 rounded transition-colors"
+        >
+          <Terminal className="w-3.5 h-3.5 text-[#78A1E2]" />
+          <span>Quick Test</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowKey((v) => !v)}
+          className="hidden md:flex items-center gap-2 px-2.5 py-1 bg-black border border-zinc-800 rounded text-xs font-mono text-zinc-400 max-w-[220px]"
+          title="Show or hide API key"
+        >
+          <span className="w-2 h-2 rounded-full bg-[#78A1E2] shrink-0" />
+          <span className="truncate">{showKey ? apiKey : maskApiKey(apiKey)}</span>
+        </button>
+
+        <span className="hidden lg:inline text-[11px] font-mono text-zinc-500 truncate max-w-[140px]" title={appId}>
+          {appId}
+        </span>
+
+        <button
+          type="button"
+          onClick={() => logout()}
+          className="px-2.5 py-1 text-xs font-mono bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 rounded"
+        >
+          Sign out
+        </button>
+      </div>
+    </header>
+  );
+};
+
+========== src/components/layout/Sidebar.jsx ==========
+import React, { useEffect, useState } from 'react';
+import {
+  Activity,
+  Layers,
+  ShieldCheck,
+  Users,
+  Terminal,
+  BarChart3,
+  Settings,
+  Zap,
+  X,
+} from 'lucide-react';
+import { getSystemStatus } from '../../api/system';
+import { useAuth } from '../../auth/AuthContext';
+
+const NAV_ITEMS = [
+  { id: 'overview', label: 'Overview', icon: Activity },
+  { id: 'applications', label: 'Application', icon: Layers },
+  { id: 'rules', label: 'Rules', icon: ShieldCheck },
+  { id: 'users', label: 'Users', icon: Users },
+  { id: 'tester', label: 'Request Tester', icon: Terminal },
+  { id: 'statistics', label: 'Statistics', icon: BarChart3 },
+  { id: 'settings', label: 'Settings', icon: Settings },
+];
+
+export const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }) => {
+  const { appId } = useAuth();
+  const [apiStatus, setApiStatus] = useState('Checking');
+
+  useEffect(() => {
+    let cancelled = false;
+    getSystemStatus()
+      .then((result) => {
+        if (!cancelled) {
+          setApiStatus(result.status === 200 ? 'Operational' : 'Unavailable');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setApiStatus('Unavailable');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <>
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/80 z-40 lg:hidden"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+
+      <aside
+        className={`fixed top-0 bottom-0 left-0 z-40 w-56 bg-zinc-950 border-r border-zinc-800 flex flex-col justify-between transition-transform duration-200 ease-in-out lg:translate-x-0 ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div>
+          <div className="h-14 px-4 flex items-center justify-between border-b border-zinc-800">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded bg-[#5C8BD6] flex items-center justify-center text-black font-bold text-xs">
+                <Zap className="w-3.5 h-3.5 fill-black text-black" />
+              </div>
+              <span className="font-mono font-bold tracking-tight text-sm text-zinc-100">
+                RLaaS Console
+              </span>
+            </div>
+            <button
+              onClick={() => setIsOpen(false)}
+              className="lg:hidden text-zinc-500 hover:text-zinc-300 p-1"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <nav className="p-2 space-y-0.5">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setIsOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-sm text-xs font-mono transition-colors text-left ${
+                    isActive
+                      ? 'bg-zinc-900 text-[#8EB2EB] border border-[#5C8BD6]/30 font-medium'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
+                  }`}
+                >
+                  <Icon
+                    className={`w-4 h-4 ${
+                      isActive ? 'text-[#78A1E2]' : 'text-zinc-500'
+                    }`}
+                  />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        <div className="p-3 border-t border-zinc-800 space-y-2 font-mono text-[11px]">
+          <div className="px-2 py-1 bg-black border border-zinc-900 rounded-sm">
+            <div className="text-zinc-500">Authenticated app</div>
+            <div className="text-zinc-300 truncate" title={appId}>
+              {appId || 'N/A'}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between px-2 py-1 bg-black border border-zinc-900 rounded-sm">
+            <span className="text-zinc-500">API Status</span>
+            <span className="inline-flex items-center gap-1.5 text-zinc-300">
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  apiStatus === 'Operational' ? 'bg-[#78A1E2]' : 'bg-zinc-500'
+                }`}
+              />
+              {apiStatus}
+            </span>
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+};
+
+========== src/main.jsx ==========
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+========== src/App.jsx ==========
+import React, { useState } from 'react';
+import { AuthProvider, useAuth } from './auth/AuthContext';
+import { Sidebar } from './components/layout/Sidebar';
+import { Header } from './components/layout/Header';
+import { OverviewPage } from './pages/OverviewPage';
+import { ApplicationsPage } from './pages/ApplicationsPage';
+import { RulesPage } from './pages/RulesPage';
+import { UsersPage } from './pages/UsersPage';
+import { RequestTesterPage } from './pages/RequestTesterPage';
+import { StatisticsPage } from './pages/StatisticsPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { LoginPage } from './pages/LoginPage';
+
+function ConsoleMain() {
+  const [activeTab, setActiveTab] = useState('overview');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  const renderActiveTab = () => {
+    switch (activeTab) {
+      case 'overview':
+        return <OverviewPage onNavigate={(tab) => setActiveTab(tab)} />;
+      case 'applications':
+        return <ApplicationsPage />;
+      case 'rules':
+        return <RulesPage />;
+      case 'users':
+        return <UsersPage />;
+      case 'tester':
+        return <RequestTesterPage />;
+      case 'statistics':
+        return <StatisticsPage />;
+      case 'settings':
+        return <SettingsPage />;
+      default:
+        return <OverviewPage onNavigate={(tab) => setActiveTab(tab)} />;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-zinc-100 flex flex-col font-sans selection:bg-[#5C8BD6] selection:text-black">
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        isOpen={isSidebarOpen}
+        setIsOpen={setIsSidebarOpen}
+      />
+
+      <div className="lg:pl-56 flex-1 flex flex-col min-w-0">
+        <Header
+          onOpenSidebar={() => setIsSidebarOpen(true)}
+          activeTab={activeTab}
+          onOpenTester={() => setActiveTab('tester')}
+        />
+
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          {renderActiveTab()}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function AppGate() {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+  return <ConsoleMain />;
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppGate />
+    </AuthProvider>
+  );
+}
+
+========== src/api/client.js ==========
+import { ApiError, messageForStatus } from './errors';
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(
+  /\/$/,
+  ''
+);
+
+const handlers = {
+  getApiKey: () => null,
+  onUnauthorized: () => {},
+};
+
+export function getApiBaseUrl() {
+  return API_BASE_URL;
+}
+
+export function configureApiClient({ getApiKey, onUnauthorized }) {
+  if (typeof getApiKey === 'function') {
+    handlers.getApiKey = getApiKey;
+  }
+  if (typeof onUnauthorized === 'function') {
+    handlers.onUnauthorized = onUnauthorized;
+  }
+}
+
+async function parseBody(response) {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+export async function apiRequest(path, options = {}) {
+  const {
+    method = 'GET',
+    body,
+    query,
+    apiKey,
+    auth = true,
+    skipUnauthorizedHandler = false,
+    signal,
+  } = options;
+
+  const url = new URL(path.startsWith('http') ? path : `${API_BASE_URL}${path}`);
+  if (query) {
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        url.searchParams.set(key, String(value));
+      }
+    });
+  }
+
+  const headers = { Accept: 'application/json' };
+  const resolvedKey = apiKey !== undefined ? apiKey : auth ? handlers.getApiKey() : null;
+
+  if (auth) {
+    if (!resolvedKey) {
+      if (!skipUnauthorizedHandler) {
+        handlers.onUnauthorized();
+      }
+      throw new ApiError(messageForStatus(401), { status: 401 });
+    }
+    headers['X-API-Key'] = resolvedKey;
+  }
+
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw error;
+    }
+    throw new ApiError('Unable to connect to RLaaS.', { status: 0 });
+  }
+
+  const payload = await parseBody(response);
+  const retryAfter = response.headers.get('Retry-After');
+
+  if (!response.ok) {
+    if (response.status === 401 && !skipUnauthorizedHandler) {
+      handlers.onUnauthorized();
+    }
+
+    throw new ApiError(messageForStatus(response.status), {
+      status: response.status,
+      retryAfter,
+      data: payload,
+    });
+  }
+
+  return {
+    status: response.status,
+    data: payload,
+    headers: {
+      retryAfter,
+    },
+  };
+}
+
+========== src/api/applications.js ==========
+import { apiRequest } from './client';
+
+export function registerApplication(name) {
+  return apiRequest('/apps/', {
+    method: 'POST',
+    auth: false,
+    body: { name },
+  });
+}
+
+export function authenticateWithKey(apiKey) {
+  return apiRequest('/auth-test', {
+    apiKey,
+    skipUnauthorizedHandler: true,
+  });
+}
+
+export function rotateApiKey(apiKey) {
+  return apiRequest('/apps/rotate-key', {
+    method: 'POST',
+    apiKey,
+    skipUnauthorizedHandler: true,
+  });
+}
+
+export function revokeApiKey() {
+  return apiRequest('/apps/revoke-key', {
+    method: 'POST',
+  });
+}
+
+========== src/api/rules.js ==========
+import { apiRequest } from './client';
+
+export function listRules() {
+  return apiRequest('/rules/');
+}
+
+export function getRule(ruleId) {
+  return apiRequest(`/rules/${encodeURIComponent(ruleId)}`);
+}
+
+export function createRule(payload) {
+  return apiRequest('/rules/', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+export function replaceRule(ruleId, payload) {
+  return apiRequest(`/rules/${encodeURIComponent(ruleId)}`, {
+    method: 'PUT',
+    body: payload,
+  });
+}
+
+export function patchRule(ruleId, payload) {
+  return apiRequest(`/rules/${encodeURIComponent(ruleId)}`, {
+    method: 'PATCH',
+    body: payload,
+  });
+}
+
+export function deleteRule(ruleId) {
+  return apiRequest(`/rules/${encodeURIComponent(ruleId)}`, {
+    method: 'DELETE',
+  });
+}
+
+========== src/api/system.js ==========
+import { apiRequest } from './client';
+
+export function getSystemStatus() {
+  return apiRequest('/', { auth: false });
+}
+
+========== src/api/statistics.js ==========
+import { apiRequest } from './client';
+
+export function getUserStats({ userId, method, resource }) {
+  return apiRequest(`/stats/${encodeURIComponent(userId)}`, {
+    query: {
+      method,
+      resource,
+    },
+  });
+}
+
+========== src/api/errors.js ==========
+export class ApiError extends Error {
+  constructor(message, { status = 0, retryAfter = null, data = null } = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.retryAfter = retryAfter;
+    this.data = data;
+  }
+}
+
+export function messageForStatus(status) {
+  if (status === 401) {
+    return 'Your API key is invalid, expired, or revoked.';
+  }
+  if (status === 403) {
+    return 'You are not authorized to access this resource.';
+  }
+  if (status === 404) {
+    return 'Resource not found.';
+  }
+  if (status === 409) {
+    return 'A rule already exists for this method and resource.';
+  }
+  if (status === 429) {
+    return 'Too many requests. Please try again shortly.';
+  }
+  if (status === 400 || status === 413 || status === 422) {
+    return 'Please check the submitted values.';
+  }
+  if (status >= 500) {
+    return 'Something went wrong on the server.';
+  }
+  if (status >= 400) {
+    return 'Please check the submitted values.';
+  }
+  return 'Something went wrong on the server.';
+}
+
+========== src/api/rateLimiter.js ==========
+import { apiRequest } from './client';
+import { ApiError } from './errors';
+
+export async function evaluateRateLimit({ userId, method, resource }) {
+  try {
+    const result = await apiRequest('/rate-limiter', {
+      method: 'POST',
+      body: {
+        user_id: userId,
+        method,
+        resource,
+      },
+    });
+    return {
+      ok: true,
+      status: result.status,
+      data: result.data,
+      retryAfter: result.headers.retryAfter,
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return {
+        ok: false,
+        status: error.status,
+        data: error.data,
+        message: error.message,
+        retryAfter: error.retryAfter,
+      };
+    }
+    throw error;
+  }
+}
+
+========== src/pages/ApplicationsPage.jsx ==========
+import React, { useState } from 'react';
+import { useAuth } from '../auth/AuthContext';
+import { PageHeader } from '../components/ui/PageHeader';
+import { StatusBadge } from '../components/ui/StatusBadge';
+import { Modal } from '../components/ui/Modal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { Notice } from '../components/ui/Notice';
+import {
+  Plus,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  RefreshCw,
+  Slash,
+  AlertTriangle,
+  Layers,
+  Info,
+} from 'lucide-react';
+import { ApiError } from '../api/errors';
+import { formatExpiresAt, maskApiKey } from '../utils/format';
+
+export const ApplicationsPage = () => {
+  const {
+    appId,
+    applicationName,
+    apiKey,
+    expiresAt,
+    register,
+    completeRegistration,
+    rotateCurrentKey,
+    revokeCurrentKey,
+  } = useAuth();
+
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState(null);
+  const [issuedSecret, setIssuedSecret] = useState(null);
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
+  const [newAppName, setNewAppName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [confirmState, setConfirmState] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    isDanger: false,
+  });
+
+  const handleCopyKey = async (key) => {
+    try {
+      await navigator.clipboard.writeText(key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('Unable to copy to clipboard.');
+    }
+  };
+
+  const handleRegisterSubmit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await register(newAppName);
+      setIssuedSecret({
+        appId: result.data.app_id,
+        apiKey: result.data.api_key,
+        expiresAt: result.data.expires_at,
+        name: newAppName.trim(),
+      });
+      setNewAppName('');
+      setIsRegisterOpen(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Authenticated Application"
+        description="This console is scoped to the application identified by your API key. The backend app ID is authoritative."
+        actions={
+          <button
+            onClick={() => setIsRegisterOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded bg-zinc-900 border border-zinc-700 text-zinc-100 hover:bg-zinc-800 transition-colors"
+          >
+            <Plus className="w-4 h-4 text-[#78A1E2]" />
+            <span>Register Application</span>
+          </button>
+        }
+      />
+
+      <Notice title="Application scope" icon={Info}>
+        You are managing one authenticated application. Registering a new application creates a separate tenant and
+        returns a new API key. It does not grant access to other existing applications.
+      </Notice>
+
+      {error && (
+        <div className="text-xs font-mono text-red-300 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          {error}
+        </div>
+      )}
+
+      {issuedSecret && (
+        <div className="bg-zinc-950 border border-amber-900/50 rounded-md p-4 space-y-3 font-mono text-xs">
+          <div className="flex items-start gap-2 text-amber-300">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>New API key issued once. Save it securely. It will not be shown again after you switch sessions.</span>
+          </div>
+          <div>
+            <div className="text-zinc-500 mb-1">App ID</div>
+            <div className="text-zinc-100">{issuedSecret.appId}</div>
+          </div>
+          <div className="flex items-center gap-2 bg-black border border-zinc-800 rounded p-2">
+            <span className="flex-1 break-all">{issuedSecret.apiKey}</span>
+            <button type="button" onClick={() => handleCopyKey(issuedSecret.apiKey)} className="text-zinc-400">
+              {copied ? <Check className="w-4 h-4 text-[#8EB2EB]" /> : <Copy className="w-4 h-4" />}
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              completeRegistration(
+                {
+                  api_key: issuedSecret.apiKey,
+                  app_id: issuedSecret.appId,
+                  expires_at: issuedSecret.expiresAt,
+                },
+                issuedSecret.name
+              );
+              setIssuedSecret(null);
+            }}
+            className="px-3 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-100"
+          >
+            Use this key for the current session
+          </button>
+        </div>
+      )}
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md overflow-hidden">
+        <table className="w-full text-left font-mono text-xs">
+          <thead>
+            <tr className="bg-zinc-900/60 text-zinc-400 border-b border-zinc-800">
+              <th className="p-3 font-normal">Application</th>
+              <th className="p-3 font-normal">App ID</th>
+              <th className="p-3 font-normal">Status</th>
+              <th className="p-3 font-normal">API Key</th>
+              <th className="p-3 font-normal">Key expiration</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="p-3 font-semibold text-zinc-100">
+                <span className="inline-flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-zinc-500" />
+                  {applicationName || 'N/A'}
+                </span>
+              </td>
+              <td className="p-3 text-zinc-400">{appId}</td>
+              <td className="p-3">
+                <StatusBadge status="active" label="Authenticated" />
+              </td>
+              <td className="p-3">
+                <StatusBadge status="active" label="In session" />
+              </td>
+              <td className="p-3 text-zinc-400">{formatExpiresAt(expiresAt)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-4 font-mono text-xs">
+        <div className="flex items-center justify-between">
+          <span className="text-zinc-400 font-medium">Secret API Key</span>
+          <StatusBadge status="active" label="Session key" />
+        </div>
+
+        <div className="flex items-center gap-2 bg-black border border-zinc-800 rounded p-2">
+          <input
+            type={showApiKey ? 'text' : 'password'}
+            readOnly
+            value={showApiKey ? apiKey : maskApiKey(apiKey)}
+            className="bg-transparent w-full text-zinc-200 text-xs font-mono focus:outline-none"
+          />
+          <button type="button" onClick={() => setShowApiKey((v) => !v)} className="text-zinc-500 hover:text-zinc-300 p-1">
+            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+          <button type="button" onClick={() => handleCopyKey(apiKey)} className="text-zinc-500 hover:text-zinc-300 p-1">
+            {copied ? <Check className="w-4 h-4 text-[#8EB2EB]" /> : <Copy className="w-4 h-4" />}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5 text-[11px] text-amber-400/90">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span>Keep this API key confidential. The browser is not the authorization boundary.</span>
+        </div>
+
+        <div className="pt-3 border-t border-zinc-800 flex items-center justify-between">
+          <button
+            onClick={() =>
+              setConfirmState({
+                isOpen: true,
+                title: 'Rotate API key',
+                message:
+                  'Rotate the API key for this authenticated application? The current key will stop working after a successful rotation. Expired keys can still be rotated.',
+                confirmText: 'Rotate key',
+                isDanger: false,
+                onConfirm: async () => {
+                  setError(null);
+                  try {
+                    const data = await rotateCurrentKey();
+                    setIssuedSecret({
+                      appId: data.app_id,
+                      apiKey: data.api_key,
+                      expiresAt: data.expires_at,
+                      name: applicationName,
+                    });
+                  } catch (err) {
+                    setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+                  }
+                },
+              })
+            }
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-[#78A1E2]" />
+            <span>Rotate Key</span>
+          </button>
+
+          <button
+            onClick={() =>
+              setConfirmState({
+                isOpen: true,
+                title: 'Revoke API key',
+                message:
+                  'Revoke the current API key? Subsequent requests will fail until you register a new application or use another valid key.',
+                confirmText: 'Revoke key',
+                isDanger: true,
+                onConfirm: async () => {
+                  setError(null);
+                  try {
+                    await revokeCurrentKey();
+                  } catch (err) {
+                    setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+                  }
+                },
+              })
+            }
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded bg-red-950/40 border border-red-900/60 text-red-300 hover:bg-red-900/60"
+          >
+            <Slash className="w-3.5 h-3.5" />
+            <span>Revoke Key</span>
+          </button>
+        </div>
+      </div>
+
+      <Modal isOpen={isRegisterOpen} onClose={() => setIsRegisterOpen(false)} title="Register New Application">
+        <form onSubmit={handleRegisterSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-mono text-zinc-400 mb-1">Application Name</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g., Billing Microservice"
+              value={newAppName}
+              onChange={(e) => setNewAppName(e.target.value)}
+              className="w-full bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+          <p className="text-[11px] text-zinc-500 font-mono">
+            Registration does not require an API key. Environment and other metadata are not stored by the current API.
+          </p>
+          <div className="pt-3 border-t border-zinc-800 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setIsRegisterOpen(false)}
+              className="px-3 py-1.5 text-xs font-mono rounded bg-zinc-900 border border-zinc-800 text-zinc-400 hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy}
+              className="px-3 py-1.5 text-xs font-mono rounded bg-zinc-800 border border-zinc-700 text-zinc-100 hover:bg-zinc-700"
+            >
+              {busy ? 'Registering…' : 'Register & Generate Keys'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={confirmState.isOpen}
+        onClose={() => setConfirmState((prev) => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmState.onConfirm}
+        title={confirmState.title}
+        message={confirmState.message}
+        confirmText={confirmState.confirmText}
+        isDanger={confirmState.isDanger}
+      />
+    </div>
+  );
+};
+
+========== src/pages/StatisticsPage.jsx ==========
+import React, { useState } from 'react';
+import { PageHeader } from '../components/ui/PageHeader';
+import { MetricCard } from '../components/ui/MetricCard';
+import { Notice } from '../components/ui/Notice';
+import { Activity, ShieldAlert, CheckCircle2, BarChart3, Filter, Info } from 'lucide-react';
+import { getUserStats } from '../api/statistics';
+import { ApiError } from '../api/errors';
+import { HTTP_METHODS, blockRate } from '../utils/format';
+import { useAuth } from '../auth/AuthContext';
+
+export const StatisticsPage = () => {
+  const { appId } = useAuth();
+  const [userId, setUserId] = useState('');
+  const [method, setMethod] = useState('GET');
+  const [resource, setResource] = useState('');
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleLoad = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await getUserStats({
+        userId: userId.trim(),
+        method,
+        resource: resource.trim(),
+      });
+      setStats(result.data);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+      setStats(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const total = stats ? Number(stats.allowed || 0) + Number(stats.blocked || 0) : null;
+
+  return (
+    <div className="space-y-6 font-mono text-xs">
+      <PageHeader
+        title="Statistics"
+        description="Counters returned by GET /stats/{user_id} for the authenticated application."
+      />
+
+      <Notice title="Available telemetry" icon={Info}>
+        The backend does not expose global application analytics, time ranges, top endpoints, or ranked users.
+        Statistics require a user ID, method, and resource. Values that cannot be obtained are shown as N/A.
+      </Notice>
+
+      <form
+        onSubmit={handleLoad}
+        className="flex flex-col gap-3 bg-zinc-950 p-3 border border-zinc-800 rounded-md"
+      >
+        <div className="flex items-center gap-2 text-zinc-400">
+          <Filter className="w-4 h-4 text-[#78A1E2]" />
+          <span className="font-semibold text-zinc-200">Query</span>
+          <span className="text-zinc-500">App {appId}</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <input
+            type="text"
+            required
+            placeholder="user_id"
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+            className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+          />
+          <select
+            value={method}
+            onChange={(e) => setMethod(e.target.value)}
+            className="bg-black border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-zinc-600"
+          >
+            {HTTP_METHODS.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            required
+            placeholder="resource"
+            value={resource}
+            onChange={(e) => setResource(e.target.value)}
+            className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="px-3 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-100 hover:bg-zinc-700"
+          >
+            {loading ? 'Loading…' : 'Load statistics'}
+          </button>
+        </div>
+      </form>
+
+      {error && (
+        <div className="text-red-300 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">{error}</div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
+          title="Total Evaluated Requests"
+          value={total === null ? 'N/A' : total.toLocaleString()}
+          subtext={stats ? `${stats.method} ${stats.resource}` : 'Requires a stats query'}
+          icon={Activity}
+        />
+        <MetricCard
+          title="Allowed Requests"
+          value={stats ? Number(stats.allowed || 0).toLocaleString() : 'N/A'}
+          icon={CheckCircle2}
+          badgeText={stats ? 'Allowed' : undefined}
+          badgeVariant="success"
+        />
+        <MetricCard
+          title="Blocked Requests"
+          value={stats ? Number(stats.blocked || 0).toLocaleString() : 'N/A'}
+          icon={ShieldAlert}
+          badgeText={stats ? 'Blocked' : undefined}
+          badgeVariant="danger"
+        />
+        <MetricCard
+          title="Block Rate"
+          value={stats ? blockRate(stats) : 'N/A'}
+          subtext="Calculated from allowed + blocked"
+          icon={BarChart3}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-3">
+          <h3 className="text-xs font-semibold text-zinc-200 border-b border-zinc-850 pb-2.5">
+            Top Rate-Limited Resource Endpoints
+          </h3>
+          <p className="text-zinc-500">N/A. The API does not return ranked endpoints.</p>
+        </div>
+        <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-3">
+          <h3 className="text-xs font-semibold text-zinc-200 border-b border-zinc-850 pb-2.5">
+            Most Rate-Limited User Identifiers
+          </h3>
+          <p className="text-zinc-500">N/A. The API does not return ranked users.</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+========== src/pages/SettingsPage.jsx ==========
+import React from 'react';
+import { useAuth } from '../auth/AuthContext';
+import { PageHeader } from '../components/ui/PageHeader';
+import { getApiBaseUrl } from '../api/client';
+import { maskApiKey } from '../utils/format';
+import { Database, Shield, KeyRound } from 'lucide-react';
+
+export const SettingsPage = () => {
+  const { appId, apiKey, logout } = useAuth();
+
+  return (
+    <div className="space-y-6 font-mono text-xs max-w-4xl">
+      <PageHeader
+        title="Console Settings"
+        description="Session and API connection details for this authenticated application."
+      />
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-4">
+        <div className="flex items-center gap-2 border-b border-zinc-850 pb-2 text-zinc-200 font-semibold">
+          <Database className="w-4 h-4 text-[#78A1E2]" />
+          <span>API connection</span>
+        </div>
+        <div>
+          <div className="text-zinc-400 mb-1">API base URL</div>
+          <div className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100">{getApiBaseUrl()}</div>
+          <p className="text-[11px] text-zinc-500 mt-1">
+            Configured with VITE_API_BASE_URL. This is a public frontend setting, not a secret.
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-4">
+        <div className="flex items-center gap-2 border-b border-zinc-850 pb-2 text-zinc-200 font-semibold">
+          <KeyRound className="w-4 h-4 text-[#78A1E2]" />
+          <span>Session</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <div className="text-zinc-400 mb-1">App ID</div>
+            <div className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 break-all">{appId}</div>
+          </div>
+          <div>
+            <div className="text-zinc-400 mb-1">API key</div>
+            <div className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100">{maskApiKey(apiKey)}</div>
+          </div>
+        </div>
+        <p className="text-zinc-500 leading-relaxed">
+          Frontend route protection is for user experience only. The FastAPI backend remains the authorization
+          boundary.
+        </p>
+        <button
+          type="button"
+          onClick={() => logout()}
+          className="px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
+        >
+          Sign out
+        </button>
+      </div>
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-2">
+        <div className="flex items-center gap-2 border-b border-zinc-850 pb-2 text-zinc-200 font-semibold">
+          <Shield className="w-4 h-4 text-[#78A1E2]" />
+          <span>Security notes</span>
+        </div>
+        <ul className="list-disc pl-4 text-zinc-400 space-y-1">
+          <li>API keys are never placed in URLs or VITE_* variables.</li>
+          <li>This session is stored in memory and sessionStorage for the current browser tab session.</li>
+          <li>A 401 response signs you out. A 403 is shown as an authorization error without retrying.</li>
+        </ul>
+      </div>
+    </div>
+  );
+};
+
+========== src/pages/RequestTesterPage.jsx ==========
+import React, { useState } from 'react';
+import { PageHeader } from '../components/ui/PageHeader';
+import { StatusBadge } from '../components/ui/StatusBadge';
+import { Terminal, Send, Clock, Shield, Code, Play } from 'lucide-react';
+import { evaluateRateLimit } from '../api/rateLimiter';
+import { HTTP_METHODS } from '../utils/format';
+import { useAuth } from '../auth/AuthContext';
+
+function classifyResult({ ok, status }) {
+  if (ok && status === 200) return { result: 'allowed', label: '200 Allowed' };
+  if (status === 429) return { result: 'blocked', label: '429 Too Many Requests' };
+  if (status === 401) return { result: 'blocked', label: '401 Authentication failure' };
+  if (status === 403) return { result: 'blocked', label: '403 Authorization failure' };
+  if (status === 404) return { result: 'blocked', label: '404 Resource not found' };
+  if (status === 400 || status === 422) return { result: 'blocked', label: `${status} Validation error` };
+  if (status >= 500) return { result: 'blocked', label: `${status} Server error` };
+  if (status === 0) return { result: 'blocked', label: 'Network failure' };
+  return { result: 'blocked', label: `${status || 'Error'}` };
+}
+
+export const RequestTesterPage = () => {
+  const { appId } = useAuth();
+  const [method, setMethod] = useState('POST');
+  const [resource, setResource] = useState('/api/v1/payments');
+  const [userId, setUserId] = useState('user_123');
+  const [lastResponse, setLastResponse] = useState(null);
+  const [isSending, setIsSending] = useState(false);
+  const [history, setHistory] = useState([]);
+
+  const runTest = async ({ nextMethod = method, nextResource = resource, nextUserId = userId } = {}) => {
+    setIsSending(true);
+    const started = performance.now();
+    const outcome = await evaluateRateLimit({
+      userId: nextUserId.trim(),
+      method: nextMethod,
+      resource: nextResource.trim(),
+    });
+    const latencyMs = (performance.now() - started).toFixed(1);
+    const classified = classifyResult(outcome);
+    const entry = {
+      id: `test_${Date.now()}`,
+      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      userId: nextUserId.trim(),
+      method: nextMethod,
+      resource: nextResource.trim(),
+      status: outcome.status,
+      result: classified.result,
+      label: classified.label,
+      latencyMs,
+      retryAfter: outcome.retryAfter,
+      body: outcome.data,
+      message: outcome.message || null,
+    };
+    setLastResponse(entry);
+    setHistory((prev) => [entry, ...prev.slice(0, 49)]);
+    setIsSending(false);
+  };
+
+  const handleSendRequest = (event) => {
+    event?.preventDefault();
+    runTest();
+  };
+
+  const handleReRun = (item) => {
+    setMethod(item.method);
+    setResource(item.resource);
+    setUserId(item.userId);
+    runTest({
+      nextMethod: item.method,
+      nextResource: item.resource,
+      nextUserId: item.userId,
+    });
+  };
+
+  return (
+    <div className="space-y-6 font-mono text-xs">
+      <PageHeader
+        title="Interactive Request Tester"
+        description="Send a real POST /rate-limiter request using this application's API key."
+      />
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-5 bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-4">
+          <div className="flex items-center justify-between border-b border-zinc-850 pb-2.5">
+            <span className="text-zinc-200 font-semibold flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-[#78A1E2]" />
+              <span>Test Payload</span>
+            </span>
+            <span className="text-[10px] text-zinc-500 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded">
+              Live backend
+            </span>
+          </div>
+
+          <form onSubmit={handleSendRequest} className="space-y-4">
+            <div>
+              <label className="block text-zinc-400 mb-1">Authenticated application</label>
+              <div className="w-full bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100">
+                {appId}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="block text-zinc-400 mb-1">HTTP Method</label>
+                <select
+                  value={method}
+                  onChange={(e) => setMethod(e.target.value)}
+                  className="w-full bg-black border border-zinc-800 rounded px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-zinc-600"
+                >
+                  {HTTP_METHODS.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-zinc-400 mb-1">Resource Endpoint Path</label>
+                <input
+                  type="text"
+                  required
+                  value={resource}
+                  onChange={(e) => setResource(e.target.value)}
+                  className="w-full bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-zinc-400 mb-1">Customer User ID</label>
+              <input
+                type="text"
+                required
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                placeholder="user_123"
+                className="w-full bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSending}
+              className="w-full py-2 px-4 rounded bg-zinc-900 border border-zinc-700 text-zinc-100 hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2 font-semibold"
+            >
+              <Send className="w-3.5 h-3.5 text-[#78A1E2]" />
+              <span>{isSending ? 'Sending…' : 'Send Test Request'}</span>
+            </button>
+          </form>
+        </div>
+
+        <div className="lg:col-span-7 bg-zinc-950 border border-zinc-800 rounded-md p-4 flex flex-col space-y-4">
+          <div className="flex items-center justify-between border-b border-zinc-850 pb-2.5">
+            <span className="text-zinc-200 font-semibold flex items-center gap-2">
+              <Code className="w-4 h-4 text-zinc-400" />
+              <span>Response</span>
+            </span>
+            {lastResponse && (
+              <div className="flex items-center gap-3">
+                <span className="text-zinc-500 flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-zinc-400" /> {lastResponse.latencyMs} ms
+                </span>
+                <StatusBadge status={lastResponse.result} label={lastResponse.label} />
+              </div>
+            )}
+          </div>
+
+          {!lastResponse ? (
+            <div className="h-64 flex flex-col items-center justify-center text-zinc-500 text-center p-6 border border-dashed border-zinc-850 rounded">
+              <Terminal className="w-8 h-8 text-zinc-600 mb-2" />
+              <p className="text-zinc-400 font-semibold">No response yet</p>
+              <p className="text-zinc-500 text-[11px] mt-1 max-w-xs">
+                Send a test request to evaluate the live RLaaS backend.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-black border border-zinc-850 rounded p-3 space-y-1">
+                <div className="text-[11px] text-zinc-500 uppercase tracking-wider mb-2 font-semibold flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-[#78A1E2]" />
+                  <span>HTTP metadata</span>
+                </div>
+                <div className="flex items-center justify-between py-1 border-b border-zinc-900/60">
+                  <span className="text-zinc-400">Status:</span>
+                  <span className="text-zinc-100 font-semibold">{lastResponse.status || 'N/A'}</span>
+                </div>
+                <div className="flex items-center justify-between py-1 border-b border-zinc-900/60">
+                  <span className="text-zinc-400">Retry-After:</span>
+                  <span className="text-zinc-100 font-semibold">{lastResponse.retryAfter || 'N/A'}</span>
+                </div>
+                {lastResponse.message && (
+                  <div className="flex items-center justify-between py-1">
+                    <span className="text-zinc-400">Message:</span>
+                    <span className="text-zinc-100 font-semibold text-right max-w-[70%]">{lastResponse.message}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-black border border-zinc-850 rounded p-3 space-y-1">
+                <div className="text-[11px] text-zinc-500 uppercase tracking-wider mb-1 font-semibold">
+                  Response Payload (JSON)
+                </div>
+                <pre className="text-zinc-300 font-mono text-[11px] overflow-x-auto p-2 bg-zinc-950 rounded border border-zinc-900">
+                  {JSON.stringify(lastResponse.body ?? { message: lastResponse.message }, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md overflow-hidden">
+        <div className="p-3 bg-zinc-900/60 border-b border-zinc-800 flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-zinc-200">Session test history</h3>
+          <span className="text-[11px] text-zinc-500">{history.length} requests in this browser session</span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="text-zinc-500 border-b border-zinc-800 bg-zinc-950">
+                <th className="p-3 font-normal">Timestamp</th>
+                <th className="p-3 font-normal">Method</th>
+                <th className="p-3 font-normal">Resource</th>
+                <th className="p-3 font-normal">User ID</th>
+                <th className="p-3 font-normal">Status Code</th>
+                <th className="p-3 font-normal">Latency</th>
+                <th className="p-3 font-normal text-right">Re-run</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-850">
+              {history.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="p-6 text-center text-zinc-500">
+                    No session test history yet. Execute requests above to log entries.
+                  </td>
+                </tr>
+              ) : (
+                history.map((item) => (
+                  <tr key={item.id} className="hover:bg-zinc-900/50 transition-colors">
+                    <td className="p-3 text-zinc-500">{item.timestamp}</td>
+                    <td className="p-3 font-semibold">
+                      <span className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800 text-[10px]">
+                        {item.method}
+                      </span>
+                    </td>
+                    <td className="p-3 text-zinc-200">{item.resource}</td>
+                    <td className="p-3 text-zinc-300 font-semibold">{item.userId}</td>
+                    <td className="p-3">
+                      <StatusBadge status={item.result} label={item.label} />
+                    </td>
+                    <td className="p-3 text-zinc-400">{item.latencyMs} ms</td>
+                    <td className="p-3 text-right">
+                      <button
+                        onClick={() => handleReRun(item)}
+                        className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-850 rounded transition-colors"
+                        title="Re-run request"
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+========== src/pages/LoginPage.jsx ==========
+import React, { useState } from 'react';
+import { Zap, KeyRound, Plus, Eye, EyeOff, Copy, Check, AlertTriangle } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
+import { ApiError } from '../api/errors';
+import { formatExpiresAt } from '../utils/format';
+
+export function LoginPage() {
+  const { login, register, completeRegistration, rotateExpiredKey, authError, clearAuthError } = useAuth();
+  const [mode, setMode] = useState('signin');
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [appName, setAppName] = useState('');
+  const [showKey, setShowKey] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [issuedSecret, setIssuedSecret] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const visibleError = error || authError;
+
+  const handleSignIn = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    clearAuthError();
+    try {
+      await login(apiKeyInput);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRegister = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    clearAuthError();
+    try {
+      const result = await register(appName);
+      setIssuedSecret({
+        appId: result.data.app_id,
+        apiKey: result.data.api_key,
+        expiresAt: result.data.expires_at,
+        name: appName.trim(),
+      });
+      setAppName('');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRotateExpired = async () => {
+    setBusy(true);
+    setError(null);
+    clearAuthError();
+    try {
+      const result = await rotateExpiredKey(apiKeyInput);
+      setIssuedSecret({
+        appId: result.app_id,
+        apiKey: result.api_key,
+        expiresAt: result.expires_at,
+        name: null,
+        rotated: true,
+      });
+      setApiKeyInput('');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCopy = async (value) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('Unable to copy to clipboard.');
+    }
+  };
+
+  if (issuedSecret) {
+    return (
+      <div className="min-h-screen bg-black text-zinc-100 flex items-center justify-center p-4 font-sans">
+        <div className="w-full max-w-lg bg-zinc-950 border border-zinc-800 rounded-md p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded bg-[#5C8BD6] flex items-center justify-center">
+              <Zap className="w-3.5 h-3.5 fill-black text-black" />
+            </div>
+            <h1 className="font-mono font-bold text-sm">API key issued</h1>
+          </div>
+
+          <div className="flex items-start gap-2 text-xs text-amber-300 bg-amber-950/30 border border-amber-900/50 rounded p-3">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p>
+              This API key is shown once. Save it securely now. RLaaS cannot display it again after you leave
+              this screen.
+            </p>
+          </div>
+
+          <div className="font-mono text-xs space-y-3">
+            <div>
+              <div className="text-zinc-500 mb-1">App ID</div>
+              <div className="bg-black border border-zinc-800 rounded px-3 py-2 text-zinc-100">
+                {issuedSecret.appId}
+              </div>
+            </div>
+            <div>
+              <div className="text-zinc-500 mb-1">API key</div>
+              <div className="flex items-center gap-2 bg-black border border-zinc-800 rounded px-3 py-2">
+                <span className="flex-1 break-all text-zinc-100">
+                  {showKey ? issuedSecret.apiKey : `${issuedSecret.apiKey.slice(0, 6)}${'•'.repeat(16)}`}
+                </span>
+                <button type="button" onClick={() => setShowKey((v) => !v)} className="text-zinc-500 hover:text-zinc-200">
+                  {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(issuedSecret.apiKey)}
+                  className="text-zinc-500 hover:text-zinc-200"
+                >
+                  {copied ? <Check className="w-4 h-4 text-[#8EB2EB]" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <div className="text-zinc-500 mb-1">Expires</div>
+              <div className="text-zinc-300">{formatExpiresAt(issuedSecret.expiresAt)}</div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              completeRegistration(
+                {
+                  api_key: issuedSecret.apiKey,
+                  app_id: issuedSecret.appId,
+                  expires_at: issuedSecret.expiresAt,
+                },
+                issuedSecret.name
+              )
+            }
+            className="w-full py-2 text-xs font-mono rounded bg-zinc-800 border border-zinc-700 text-zinc-100 hover:bg-zinc-700"
+          >
+            Continue to dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-black text-zinc-100 flex items-center justify-center p-4 font-sans">
+      <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-md p-6 space-y-5">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded bg-[#5C8BD6] flex items-center justify-center">
+            <Zap className="w-3.5 h-3.5 fill-black text-black" />
+          </div>
+          <div>
+            <div className="font-mono font-bold text-sm">RLaaS Console</div>
+            <div className="text-[11px] text-zinc-500 font-mono">Customer application dashboard</div>
+          </div>
+        </div>
+
+        <div className="flex border border-zinc-800 rounded overflow-hidden text-xs font-mono">
+          <button
+            type="button"
+            onClick={() => {
+              setMode('signin');
+              setError(null);
+            }}
+            className={`flex-1 px-3 py-2 ${mode === 'signin' ? 'bg-zinc-900 text-[#8EB2EB]' : 'text-zinc-400 hover:text-zinc-200'}`}
+          >
+            Sign in
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('register');
+              setError(null);
+            }}
+            className={`flex-1 px-3 py-2 border-l border-zinc-800 ${mode === 'register' ? 'bg-zinc-900 text-[#8EB2EB]' : 'text-zinc-400 hover:text-zinc-200'}`}
+          >
+            Register application
+          </button>
+        </div>
+
+        {visibleError && (
+          <div className="text-xs font-mono text-red-300 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+            {visibleError}
+          </div>
+        )}
+
+        {mode === 'signin' ? (
+          <form onSubmit={handleSignIn} className="space-y-4 font-mono text-xs">
+            <div>
+              <label className="block text-zinc-400 mb-1">API key</label>
+              <div className="flex items-center gap-2 bg-black border border-zinc-800 rounded px-3 py-1.5">
+                <KeyRound className="w-4 h-4 text-zinc-500" />
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  required
+                  autoComplete="off"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="rlaas_…"
+                  className="w-full bg-transparent text-zinc-100 placeholder-zinc-600 focus:outline-none"
+                />
+                <button type="button" onClick={() => setShowKey((v) => !v)} className="text-zinc-500 hover:text-zinc-200">
+                  {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full py-2 rounded bg-zinc-800 border border-zinc-700 text-zinc-100 hover:bg-zinc-700 disabled:opacity-60"
+            >
+              {busy ? 'Authenticating…' : 'Open dashboard'}
+            </button>
+            <button
+              type="button"
+              disabled={busy || !apiKeyInput.trim()}
+              onClick={handleRotateExpired}
+              className="w-full py-2 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
+            >
+              Rotate expired key
+            </button>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              Authentication uses the existing <span className="text-zinc-300">X-API-Key</span> header. The
+              backend determines which application you can access. Expired keys can be rotated without creating a
+              new application.
+            </p>
+          </form>
+        ) : (
+          <form onSubmit={handleRegister} className="space-y-4 font-mono text-xs">
+            <div>
+              <label className="block text-zinc-400 mb-1">Application name</label>
+              <input
+                type="text"
+                required
+                minLength={1}
+                value={appName}
+                onChange={(e) => setAppName(e.target.value)}
+                placeholder="Payment Service"
+                className="w-full bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full py-2 rounded bg-zinc-800 border border-zinc-700 text-zinc-100 hover:bg-zinc-700 disabled:opacity-60 flex items-center justify-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5 text-[#78A1E2]" />
+              {busy ? 'Registering…' : 'Register application'}
+            </button>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              Registration is a public bootstrap operation. The API key is returned once by the backend.
+            </p>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+========== src/pages/OverviewPage.jsx ==========
+import React, { useEffect, useState } from 'react';
+import { PageHeader } from '../components/ui/PageHeader';
+import { MetricCard } from '../components/ui/MetricCard';
+import { Notice } from '../components/ui/Notice';
+import { Activity, ShieldCheck, CheckCircle2, AlertCircle, ArrowUpRight, Info } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
+import { listRules } from '../api/rules';
+import { ApiError } from '../api/errors';
+import { getSystemStatus } from '../api/system';
+
+export const OverviewPage = ({ onNavigate }) => {
+  const { appId, applicationName } = useAuth();
+  const [rules, setRules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [systemOk, setSystemOk] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    Promise.all([listRules(), getSystemStatus().catch(() => null)])
+      .then(([rulesResult, systemResult]) => {
+        if (cancelled) return;
+        setRules(Array.isArray(rulesResult.data) ? rulesResult.data : []);
+        setSystemOk(systemResult?.status === 200);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Application Overview"
+        description="Rate-limiting console for the authenticated application. Metrics shown here come only from existing backend endpoints."
+        badge={appId}
+      />
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 font-mono text-xs">
+        <div className="text-zinc-500 uppercase tracking-wider mb-2">Current application</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <div className="text-zinc-500">Name</div>
+            <div className="text-zinc-100 font-semibold">{applicationName || 'N/A'}</div>
+          </div>
+          <div>
+            <div className="text-zinc-500">App ID</div>
+            <div className="text-zinc-100 font-semibold break-all">{appId || 'N/A'}</div>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-xs font-mono text-red-300 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
+          title="Total Requests"
+          value="N/A"
+          subtext="No application-wide totals in the API"
+          icon={Activity}
+        />
+        <MetricCard
+          title="Allowed Requests"
+          value="N/A"
+          subtext="Query a user, method, and resource"
+          icon={CheckCircle2}
+        />
+        <MetricCard
+          title="Blocked Requests"
+          value="N/A"
+          subtext="Query a user, method, and resource"
+          icon={AlertCircle}
+        />
+        <MetricCard
+          title="Active Rules"
+          value={loading ? '…' : rules.length}
+          subtext="Rules for this application"
+          icon={ShieldCheck}
+        />
+      </div>
+
+      <Notice title="Statistics scope" icon={Info}>
+        The backend exposes counters per user ID, HTTP method, and resource. It does not provide global request
+        totals, hourly charts, or request logs. Use Users or Statistics to query a specific combination.
+      </Notice>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-zinc-950 border border-zinc-800 rounded-md p-4">
+          <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-800">
+            <div>
+              <h3 className="text-sm font-semibold font-mono text-zinc-100">Configured rules</h3>
+              <p className="text-[11px] text-zinc-500 font-mono">Scoped to the authenticated application</p>
+            </div>
+            <button
+              onClick={() => onNavigate('rules')}
+              className="text-xs font-mono text-[#8EB2EB] hover:text-zinc-100 flex items-center gap-1 transition-colors"
+            >
+              Manage rules <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {loading ? (
+            <p className="text-xs font-mono text-zinc-500">Loading rules…</p>
+          ) : rules.length === 0 ? (
+            <p className="text-xs font-mono text-zinc-500">No rules are configured for this application.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left font-mono text-xs">
+                <thead>
+                  <tr className="text-zinc-500 border-b border-zinc-850">
+                    <th className="pb-2 font-normal">Method</th>
+                    <th className="pb-2 font-normal">Resource</th>
+                    <th className="pb-2 font-normal">Algorithm</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900">
+                  {rules.slice(0, 8).map((rule) => (
+                    <tr key={rule.rule_id} className="hover:bg-zinc-900/50">
+                      <td className="py-2.5">
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800 text-[10px]">
+                          {rule.method}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-zinc-300">{rule.resource}</td>
+                      <td className="py-2.5 text-zinc-400">{rule.algorithm}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-mono uppercase tracking-wider text-zinc-400">Application</span>
+              <button
+                onClick={() => onNavigate('applications')}
+                className="text-xs font-mono text-[#78A1E2] hover:underline"
+              >
+                Manage
+              </button>
+            </div>
+            <div className="text-sm font-mono text-zinc-100 break-all">{appId}</div>
+            <p className="text-[11px] text-zinc-500 font-mono mt-2">
+              Status is determined by a successful API-key authentication. Access is enforced by the backend.
+            </p>
+          </div>
+
+          <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-mono text-zinc-400 uppercase">System Status</div>
+              <div className="text-xs font-mono text-zinc-200 mt-1 font-semibold">
+                {systemOk === null ? 'Checking…' : systemOk ? 'RLaaS API reachable' : 'RLaaS API unreachable'}
+              </div>
+            </div>
+            <span
+              className={`w-3 h-3 rounded-full ${systemOk ? 'bg-[#78A1E2]' : 'bg-zinc-600'}`}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+========== src/pages/UsersPage.jsx ==========
+import React, { useState } from 'react';
+import { PageHeader } from '../components/ui/PageHeader';
+import { MetricCard } from '../components/ui/MetricCard';
+import { Notice } from '../components/ui/Notice';
+import { Search, UserCheck, ShieldAlert, Activity, Info } from 'lucide-react';
+import { getUserStats } from '../api/statistics';
+import { ApiError } from '../api/errors';
+import { HTTP_METHODS, blockRate } from '../utils/format';
+import { useAuth } from '../auth/AuthContext';
+
+export const UsersPage = () => {
+  const { appId } = useAuth();
+  const [userId, setUserId] = useState('');
+  const [method, setMethod] = useState('GET');
+  const [resource, setResource] = useState('');
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleInspect = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    setStats(null);
+    try {
+      const result = await getUserStats({
+        userId: userId.trim(),
+        method,
+        resource: resource.trim(),
+      });
+      setStats(result.data);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const total = stats ? Number(stats.allowed || 0) + Number(stats.blocked || 0) : null;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="User Inspector"
+        description="Inspect rate-limiting counters for a customer-supplied user ID, method, and resource."
+      />
+
+      <Notice title="User Identity Architecture Notice" icon={Info}>
+        User identity is provided by the customer application. RLaaS uses the supplied user ID for rate-limit tracking
+        and does not authenticate the end user.
+      </Notice>
+
+      <form
+        onSubmit={handleInspect}
+        className="bg-zinc-950 p-4 border border-zinc-800 rounded-md space-y-3 font-mono text-xs"
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="relative sm:col-span-1">
+            <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              required
+              placeholder="user_id"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              className="w-full bg-black border border-zinc-800 rounded pl-9 pr-3 py-1.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+          <select
+            value={method}
+            onChange={(e) => setMethod(e.target.value)}
+            className="bg-black border border-zinc-800 rounded px-2 py-1.5 text-zinc-200 focus:outline-none focus:border-zinc-600"
+          >
+            {HTTP_METHODS.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            required
+            placeholder="resource e.g. /api/v1/payments"
+            value={resource}
+            onChange={(e) => setResource(e.target.value)}
+            className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="px-3 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-100 hover:bg-zinc-700"
+        >
+          {loading ? 'Loading…' : 'Inspect user'}
+        </button>
+      </form>
+
+      {error && (
+        <div className="text-xs font-mono text-red-300 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          {error}
+        </div>
+      )}
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-4">
+        <div className="flex items-center justify-between border-b border-zinc-850 pb-3">
+          <div className="flex items-center gap-2 font-mono">
+            <span className="text-xs text-zinc-500 uppercase">Inspected ID:</span>
+            <span className="text-base font-bold text-zinc-100">{stats?.user_id || userId || '—'}</span>
+          </div>
+          <div className="text-xs font-mono text-zinc-500">
+            App ID: <span className="text-zinc-300">{stats?.app_id || appId}</span>
+          </div>
+        </div>
+
+        {!stats && !loading ? (
+          <p className="text-xs font-mono text-zinc-500">
+            Enter a user ID, method, and resource, then inspect. Counters come from GET /stats/{'{user_id}'}.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <MetricCard title="Total User Requests" value={total === null ? '…' : total.toLocaleString()} icon={Activity} />
+            <MetricCard
+              title="Allowed Requests"
+              value={stats ? Number(stats.allowed || 0).toLocaleString() : '…'}
+              icon={UserCheck}
+              badgeText="Allowed"
+              badgeVariant="success"
+            />
+            <MetricCard
+              title="Blocked Requests"
+              value={stats ? Number(stats.blocked || 0).toLocaleString() : '…'}
+              icon={ShieldAlert}
+              badgeText={stats ? blockRate(stats) : undefined}
+              badgeVariant={stats && Number(stats.blocked) > 0 ? 'danger' : 'neutral'}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md p-4 font-mono text-xs text-zinc-400">
+        <h3 className="text-xs font-semibold text-zinc-200 mb-2">Recent activity</h3>
+        <p>N/A. The backend returns aggregate allowed and blocked counts, not a request activity log.</p>
+        {stats && (
+          <div className="mt-3 grid grid-cols-2 gap-2 text-zinc-300">
+            <div>Method: {stats.method}</div>
+            <div>Resource: {stats.resource}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+========== src/pages/RulesPage.jsx ==========
+import React, { useEffect, useState } from 'react';
+import { PageHeader } from '../components/ui/PageHeader';
+import { StatusBadge } from '../components/ui/StatusBadge';
+import { Modal } from '../components/ui/Modal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { Plus, Search, Edit2, Trash2, ShieldCheck } from 'lucide-react';
+import { createRule, deleteRule, listRules, replaceRule } from '../api/rules';
+import { ApiError } from '../api/errors';
+import { ALGORITHMS, HTTP_METHODS, algorithmLabel, buildRuleConfig } from '../utils/format';
+import { useAuth } from '../auth/AuthContext';
+
+const emptyForm = {
+  method: 'GET',
+  resource: '',
+  algorithm: 'fixed_window',
+  limit: 100,
+  window_size: 60,
+  capacity: 100,
+  refill_rate: 10,
+};
+
+export const RulesPage = () => {
+  const { appId } = useAuth();
+  const [rules, setRules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [searchResource, setSearchResource] = useState('');
+  const [methodFilter, setMethodFilter] = useState('ALL');
+  const [algorithmFilter, setAlgorithmFilter] = useState('ALL');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [formError, setFormError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, ruleId: null, ruleName: '' });
+
+  const loadRules = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await listRules();
+      setRules(Array.isArray(result.data) ? result.data : []);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRules();
+  }, []);
+
+  const filteredRules = rules.filter((rule) => {
+    const matchesResource = (rule.resource || '').toLowerCase().includes(searchResource.toLowerCase());
+    const matchesMethod = methodFilter === 'ALL' || rule.method === methodFilter;
+    const matchesAlgorithm = algorithmFilter === 'ALL' || rule.algorithm === algorithmFilter;
+    return matchesResource && matchesMethod && matchesAlgorithm;
+  });
+
+  const openCreateModal = () => {
+    setEditingRule(null);
+    setForm(emptyForm);
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (rule) => {
+    setEditingRule(rule);
+    setForm({
+      method: rule.method || 'GET',
+      resource: rule.resource || '',
+      algorithm: rule.algorithm || 'fixed_window',
+      limit: rule.config?.limit ?? 100,
+      window_size: rule.config?.window_size ?? 60,
+      capacity: rule.config?.capacity ?? 100,
+      refill_rate: rule.config?.refill_rate ?? 10,
+    });
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
+  const handleFormSubmit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setFormError(null);
+    const payload = {
+      method: form.method,
+      resource: form.resource.trim(),
+      algorithm: form.algorithm,
+      config: buildRuleConfig(form.algorithm, form),
+    };
+    try {
+      if (editingRule) {
+        await replaceRule(editingRule.rule_id, payload);
+      } else {
+        await createRule(payload);
+      }
+      setIsModalOpen(false);
+      await loadRules();
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm.ruleId) return;
+    setError(null);
+    try {
+      await deleteRule(deleteConfirm.ruleId);
+      setDeleteConfirm({ isOpen: false, ruleId: null, ruleName: '' });
+      await loadRules();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to connect to RLaaS.');
+      setDeleteConfirm({ isOpen: false, ruleId: null, ruleName: '' });
+    }
+  };
+
+  const renderConfigSummary = (rule) => {
+    if (rule.algorithm === 'token_bucket') {
+      return (
+        <span className="font-mono text-[11px] text-zinc-300">
+          cap: <strong className="text-zinc-100">{rule.config?.capacity}</strong>, refill:{' '}
+          <strong className="text-zinc-100">{rule.config?.refill_rate}/s</strong>
+        </span>
+      );
+    }
+    return (
+      <span className="font-mono text-[11px] text-zinc-300">
+        limit: <strong className="text-zinc-100">{rule.config?.limit}</strong> req /{' '}
+        <strong className="text-zinc-100">{rule.config?.window_size}s</strong>
+      </span>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Rate Limiting Policies & Rules"
+        description="Configure evaluation algorithms, threshold windows, and resource paths for this application."
+        actions={
+          <button
+            onClick={openCreateModal}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded bg-zinc-900 border border-zinc-700 text-zinc-100 hover:bg-zinc-800 transition-colors"
+          >
+            <Plus className="w-4 h-4 text-[#78A1E2]" />
+            <span>Create Rule</span>
+          </button>
+        }
+      />
+
+      {error && (
+        <div className="text-xs font-mono text-red-300 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">
+          {error}
+        </div>
+      )}
+
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-zinc-950 p-3 border border-zinc-800 rounded-md font-mono text-xs">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
+          <input
+            type="text"
+            placeholder="Search resource path e.g. /payments..."
+            value={searchResource}
+            onChange={(e) => setSearchResource(e.target.value)}
+            className="w-full bg-black border border-zinc-800 rounded pl-9 pr-3 py-1.5 text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+          />
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-zinc-500">Method:</span>
+            <select
+              value={methodFilter}
+              onChange={(e) => setMethodFilter(e.target.value)}
+              className="bg-black border border-zinc-800 rounded px-2 py-1.5 text-zinc-200 focus:outline-none focus:border-zinc-600"
+            >
+              <option value="ALL">ALL</option>
+              {HTTP_METHODS.map((method) => (
+                <option key={method} value={method}>
+                  {method}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-zinc-500">Algorithm:</span>
+            <select
+              value={algorithmFilter}
+              onChange={(e) => setAlgorithmFilter(e.target.value)}
+              className="bg-black border border-zinc-800 rounded px-2 py-1.5 text-zinc-200 focus:outline-none focus:border-zinc-600"
+            >
+              <option value="ALL">All Algorithms</option>
+              {ALGORITHMS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md overflow-hidden font-mono text-xs">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-zinc-900/60 text-zinc-400 border-b border-zinc-800">
+                <th className="p-3 font-normal">Method</th>
+                <th className="p-3 font-normal">Resource Path</th>
+                <th className="p-3 font-normal">Algorithm</th>
+                <th className="p-3 font-normal">Configuration</th>
+                <th className="p-3 font-normal">App Context</th>
+                <th className="p-3 font-normal">Status</th>
+                <th className="p-3 font-normal text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-850">
+              {loading ? (
+                <tr>
+                  <td colSpan="7" className="p-6 text-center text-zinc-500">
+                    Loading rules…
+                  </td>
+                </tr>
+              ) : filteredRules.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="p-6 text-center text-zinc-500">
+                    No rate limiting rules match the filter criteria.
+                  </td>
+                </tr>
+              ) : (
+                filteredRules.map((rule) => (
+                  <tr key={rule.rule_id} className="hover:bg-zinc-900/50 transition-colors">
+                    <td className="p-3 font-semibold">
+                      <span className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 text-[11px]">
+                        {rule.method}
+                      </span>
+                    </td>
+                    <td className="p-3 text-zinc-100 font-semibold">{rule.resource}</td>
+                    <td className="p-3 text-zinc-300">
+                      <span className="inline-flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#78A1E2]" />
+                        {algorithmLabel(rule.algorithm)}
+                      </span>
+                    </td>
+                    <td className="p-3">{renderConfigSummary(rule)}</td>
+                    <td className="p-3 text-zinc-400 text-[11px] truncate max-w-[130px]">{appId}</td>
+                    <td className="p-3">
+                      <StatusBadge status="active" />
+                    </td>
+                    <td className="p-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => openEditModal(rule)}
+                          className="p-1 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-850 rounded transition-colors"
+                          title="Edit Rule"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() =>
+                            setDeleteConfirm({
+                              isOpen: true,
+                              ruleId: rule.rule_id,
+                              ruleName: `${rule.method} ${rule.resource}`,
+                            })
+                          }
+                          className="p-1 text-zinc-500 hover:text-red-400 hover:bg-zinc-850 rounded transition-colors"
+                          title="Delete Rule"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={editingRule ? 'Edit Rate Limiting Rule' : 'Create Rate Limiting Rule'}
+        maxWidth="max-w-md"
+      >
+        <form onSubmit={handleFormSubmit} className="space-y-4 font-mono text-xs">
+          {formError && (
+            <div className="text-red-300 bg-red-950/40 border border-red-900/50 rounded px-3 py-2">{formError}</div>
+          )}
+
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-zinc-400 mb-1">HTTP Method</label>
+              <select
+                value={form.method}
+                onChange={(e) => setForm((prev) => ({ ...prev, method: e.target.value }))}
+                className="w-full bg-black border border-zinc-800 rounded px-2 py-1.5 text-zinc-100 focus:outline-none focus:border-zinc-600"
+              >
+                {HTTP_METHODS.map((method) => (
+                  <option key={method} value={method}>
+                    {method}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-zinc-400 mb-1">Resource Pattern</label>
+              <input
+                type="text"
+                required
+                placeholder="/api/v1/payments"
+                value={form.resource}
+                onChange={(e) => setForm((prev) => ({ ...prev, resource: e.target.value }))}
+                className="w-full bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-zinc-400 mb-1">Rate Limit Algorithm</label>
+            <select
+              value={form.algorithm}
+              onChange={(e) => setForm((prev) => ({ ...prev, algorithm: e.target.value }))}
+              className="w-full bg-black border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-zinc-600"
+            >
+              {ALGORITHMS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="bg-black border border-zinc-800 rounded p-3 space-y-3">
+            <span className="text-zinc-400 text-[11px] uppercase tracking-wider block font-semibold">
+              Algorithm Parameters ({algorithmLabel(form.algorithm)})
+            </span>
+
+            {(form.algorithm === 'fixed_window' || form.algorithm === 'sliding_window') && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 mb-1">Max Requests (Limit)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={form.limit}
+                    onChange={(e) => setForm((prev) => ({ ...prev, limit: e.target.value }))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-zinc-400 mb-1">Window Size (Seconds)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={form.window_size}
+                    onChange={(e) => setForm((prev) => ({ ...prev, window_size: e.target.value }))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+            )}
+
+            {form.algorithm === 'token_bucket' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 mb-1">Bucket Capacity</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={form.capacity}
+                    onChange={(e) => setForm((prev) => ({ ...prev, capacity: e.target.value }))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-zinc-400 mb-1">Refill Rate (Tokens/sec)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="any"
+                    required
+                    value={form.refill_rate}
+                    onChange={(e) => setForm((prev) => ({ ...prev, refill_rate: e.target.value }))}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-3 border-t border-zinc-800 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(false)}
+              className="px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-3 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-100 hover:bg-zinc-700"
+            >
+              {saving ? 'Saving…' : editingRule ? 'Save Changes' : 'Create Policy Rule'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={deleteConfirm.isOpen}
+        onClose={() => setDeleteConfirm({ isOpen: false, ruleId: null, ruleName: '' })}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Rate Limit Rule"
+        message={`Are you sure you want to delete policy "${deleteConfirm.ruleName}"? Requests to this method and resource will no longer match a rule.`}
+        confirmText="Delete Rule"
+        isDanger={true}
+      />
+    </div>
+  );
+};
+
+===== ENV NAMES ONLY =====
+VITE_API_BASE_URL
+
+===== API REFERENCES =====
+src/App.jsx:7:import { RulesPage } from './pages/RulesPage';
+src/api/client.js:3:const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(
+src/api/client.js:36:export async function apiRequest(path, options = {}) {
+src/api/client.js:66:    headers['X-API-Key'] = resolvedKey;
+src/api/client.js:75:    response = await fetch(url.toString(), {
+src/api/applications.js:1:import { apiRequest } from './client';
+src/api/applications.js:4:  return apiRequest('/apps/', {
+src/api/applications.js:12:  return apiRequest('/auth-test', {
+src/api/applications.js:19:  return apiRequest('/apps/rotate-key', {
+src/api/applications.js:27:  return apiRequest('/apps/revoke-key', {
+src/api/rules.js:1:import { apiRequest } from './client';
+src/api/rules.js:4:  return apiRequest('/rules/');
+src/api/rules.js:8:  return apiRequest(`/rules/${encodeURIComponent(ruleId)}`);
+src/api/rules.js:12:  return apiRequest('/rules/', {
+src/api/rules.js:19:  return apiRequest(`/rules/${encodeURIComponent(ruleId)}`, {
+src/api/rules.js:26:  return apiRequest(`/rules/${encodeURIComponent(ruleId)}`, {
+src/api/rules.js:33:  return apiRequest(`/rules/${encodeURIComponent(ruleId)}`, {
+src/api/system.js:1:import { apiRequest } from './client';
+src/api/system.js:4:  return apiRequest('/', { auth: false });
+src/api/statistics.js:1:import { apiRequest } from './client';
+src/api/statistics.js:4:  return apiRequest(`/stats/${encodeURIComponent(userId)}`, {
+src/api/rateLimiter.js:1:import { apiRequest } from './client';
+src/api/rateLimiter.js:6:    const result = await apiRequest('/rate-limiter', {
+src/pages/StatisticsPage.jsx:45:        description="Counters returned by GET /stats/{user_id} for the authenticated application."
+src/pages/SettingsPage.jsx:27:            Configured with VITE_API_BASE_URL. This is a public frontend setting, not a secret.
+src/pages/RequestTesterPage.jsx:79:        description="Send a real POST /rate-limiter request using this application's API key."
+src/pages/LoginPage.jsx:235:              Authentication uses the existing <span className="text-zinc-300">X-API-Key</span> header. The
+src/pages/OverviewPage.jsx:7:import { listRules } from '../api/rules';
+src/pages/UsersPage.jsx:117:            Enter a user ID, method, and resource, then inspect. Counters come from GET /stats/{'{user_id}'}.
+src/pages/RulesPage.jsx:7:import { createRule, deleteRule, listRules, replaceRule } from '../api/rules';
