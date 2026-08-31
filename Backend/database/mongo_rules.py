@@ -1,4 +1,4 @@
-from Backend.database.mongodb import rules
+from database.mongodb import rules
 
 def create_rule(rule_data):
     rules.insert_one(rule_data)

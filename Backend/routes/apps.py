@@ -1,15 +1,15 @@
 from fastapi import APIRouter, HTTPException, Depends
-from Backend.models.app import AppCreate
-from Backend.database.mongo_apps import create_app, revoke_api_key, rotate_api_key, get_app
-from Backend.auth.api_key import (
+from models.app import AppCreate
+from database.mongo_apps import create_app, revoke_api_key, rotate_api_key, get_app
+from auth.api_key import (
     generate_api_key, 
     generate_app_id, 
     hash_api_key,
      get_authenticated_app_for_rotation
     )
 from datetime import datetime, timedelta, timezone
-from Backend.auth.api_key import get_authenticated_app
-from Backend.auth.management_limit import check_management_limit
+from auth.api_key import get_authenticated_app
+from auth.management_limit import check_management_limit
 
 
 

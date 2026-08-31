@@ -1,4 +1,4 @@
-from Backend.Limiter.Algorithms.Sliding_window import SlidingWindowLimiter
+from Limiter.Algorithms.Sliding_window import SlidingWindowLimiter
 from fastapi import HTTPException
 
 limiter = SlidingWindowLimiter(

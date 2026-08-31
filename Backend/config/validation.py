@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from Backend.config.algorithm_registry import ALGORITHMS
+from config.algorithm_registry import ALGORITHMS
 
 
 def validate_algorithm(algorithm: str):

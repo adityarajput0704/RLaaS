@@ -1,4 +1,4 @@
-from Backend.database.mongodb import apps
+from database.mongodb import apps
 
 
 def create_app(app_data):
