@@ -3,6 +3,7 @@ from database.mongodb import apps
 import secrets
 import hashlib
 from datetime import datetime, timezone
+from config.cache import redis_client
 
 def generate_app_id():
     return f"app_{secrets.token_hex(8)}"
@@ -18,6 +19,13 @@ def authenticate_api_key(api_key: str):
         raise HTTPException(status_code=401, detail="Api key required")
 
     api_key_hash= hash_api_key(api_key)
+
+    cache_key = f"auth:{api_key_hash}"
+
+    cached_app_id = redis_client.get(cache_key)
+
+    if cached_app_id:
+        return cached_app_id
 
     app = apps.find_one({
         "api_key_hash": api_key_hash
@@ -46,6 +54,11 @@ def authenticate_api_key(api_key: str):
                 detail="API key has expired"
             )
 
+    redis_client.setex(
+        cache_key,
+        60,
+        app["app_id"]
+    )
     return app["app_id"]
 
 

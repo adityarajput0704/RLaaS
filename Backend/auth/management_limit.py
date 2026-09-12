@@ -1,19 +1,7 @@
 from fastapi import Header, HTTPException
-from redis import Redis
-from dotenv import load_dotenv
 from auth.api_key import authenticate_api_key, hash_api_key
-import os
+from config.cache import redis_client
 
-load_dotenv()
-
-redis_client = Redis(
-    host=os.getenv("REDIS_HOST"),
-    port=int(os.getenv("REDIS_PORT")),
-    db=0,
-    decode_responses=True,
-    socket_connect_timeout=5,
-    socket_timeout=5
-)
 
 
 def check_management_limit(

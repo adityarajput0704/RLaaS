@@ -1,25 +1,13 @@
 from fastapi import HTTPException
 import time 
 import uuid
-from redis import Redis
+from config.cache import redis_client
 from dotenv import load_dotenv
 import os
 
 load_dotenv()  # Load environment variables from .env file
 
-class TokenBucketLimiter:
-    def __init__(self, capacity: int, refill_rate: float, ):
-        self.capacity = capacity
-        self.refill_rate = refill_rate
-        self.redis = Redis(host=os.getenv("REDIS_HOST"),
-                                port=int(os.getenv("REDIS_PORT")),
-                                db=0,
-                                decode_responses=True,
-                                socket_connect_timeout=5,
-                                socket_timeout=5
-                                )
-
-        self.script = self.redis.register_script("""
+token_bucket_script= redis_client.register_script("""
             local tokens = tonumber(
                 redis.call("HGET", KEYS[1], "tokens")
             )
@@ -49,16 +37,18 @@ class TokenBucketLimiter:
             -- Check whether a token is available
             if tokens < 1 then
 
-                redis.call(
-                    "HSET",
-                    KEYS[1],
-                    "tokens",
-                    tokens,
-                    "last_refill",
-                    current_time
-                )
+            redis.call(
+                "HSET",
+                KEYS[1],
+                "tokens",
+                tokens,
+                "last_refill",
+                current_time
+            )
 
-                return 0
+            redis.call("INCR", ARGV[5])
+
+            return 0
             end
 
             -- Consume one token
@@ -79,20 +69,32 @@ class TokenBucketLimiter:
                 KEYS[1],
                 3600
             )
+            redis.call("INCR", ARGV[4])
+
 
             return 1
         """)
-
+class TokenBucketLimiter:
+    def __init__(self, capacity: int, refill_rate: float, ):
+        self.capacity = capacity
+        self.refill_rate = refill_rate
+        self.redis = redis_client
+        
 
     def is_request_allowed(self, identifier, method, resource):
         key = f"bucket:{identifier}:{method}:{resource}"
 
-        result = self.script(
+        allowed_key = f"stats:{identifier}:{method}:{resource}:allowed"
+        blocked_key = f"stats:{identifier}:{method}:{resource}:blocked"
+
+        result = token_bucket_script(
             keys=[key],
-            args = [
+            args=[
                 self.capacity,
                 self.refill_rate,
-                time.time()
+                time.time(),
+                allowed_key,
+                blocked_key
             ]
         )
 

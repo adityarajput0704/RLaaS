@@ -92,14 +92,11 @@ def rate_limiter(
         **rule["config"]
     )
 
-    limiter = Limiter(algorithm)
-
-    return limiter.check(
-        app_id,
-        request.user_id,
-        method,
-        request.resource
-    )
+    return algorithm.is_request_allowed(
+    f"{app_id}:{request.user_id}",
+    method,
+    request.resource
+)
 
 stats = Statistics()
 @app.get("/stats/{user_id}")

@@ -4,18 +4,20 @@ import os
 
 load_dotenv()
 
+redis_client = Redis(
+    host=os.getenv("REDIS_HOST"),
+    port=int(os.getenv("REDIS_PORT")),
+    db=0,
+    decode_responses=True,
+    socket_connect_timeout=5,
+    socket_timeout=5
+)
+
 
 class Statistics:
 
     def __init__(self):
-        self.redis = Redis(
-            host=os.getenv("REDIS_HOST"),
-            port=int(os.getenv("REDIS_PORT")),
-            db=0,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5
-        )
+        self.redis = redis_client
 
     def record_allowed(self, app_id, user_id, method, resource):
         method = method.upper()
@@ -59,7 +61,6 @@ class Statistics:
         for key in self.redis.scan_iter(
             match=f"stats:{app_id}:*:*:*:allowed"
         ):
-             
             allowed += int(self.redis.get(key) or 0)
 
         for key in self.redis.scan_iter(

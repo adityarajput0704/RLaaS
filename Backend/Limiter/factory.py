@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from Limiter.Algorithms.Fixed_window import FixedWindowLimiter
 from Limiter.Algorithms.Sliding_window import SlidingWindowLimiter
 from Limiter.Algorithms.Token_bucket import TokenBucketLimiter
+from functools import lru_cache
 
 algorithm_map = {
     "fixed_window": FixedWindowLimiter,
@@ -9,6 +10,7 @@ algorithm_map = {
     "token_bucket": TokenBucketLimiter
 }
 
+@lru_cache(maxsize=256)
 def create_limiter(algorithm_name: str, **kwargs):
 
     algorithm_class = algorithm_map.get(algorithm_name)
